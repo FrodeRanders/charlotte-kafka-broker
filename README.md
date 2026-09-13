@@ -96,7 +96,9 @@ compression, record headers, and dynamic topic creation.
 - [x] `broker-engine`: dispatch and per-partition error mapping
 - [x] Host TCP front end and `charlotte-kafka` conformance tests
 - [x] `broker-el0` builds and signs through the platform tooling
-- [ ] EL0 execution under QEMU and deployment through a `CDEPLOY5` descriptor
+- [x] EL0 execution under QEMU and deployment through a `CDEPLOY5` descriptor
+- [x] Bounded per-partition retention and an independent kafka-python load client
+- [ ] Client-side connector interop (requires a TLS listener decision)
 - [ ] Segmented, durable partition logs over the block/object-store protocol
 - [ ] Partition placement and Raft-replicated logs across cluster members
 
@@ -117,6 +119,22 @@ cargo run --example host_broker   # TCP broker on 127.0.0.1:9092
 tools/charlotte-sdk.sh use-os ../charlotte-os   # or: fetch / unpack <sdk.tar.gz>
 tools/build-elf.sh
 tools/package.sh sign
+```
+
+With Docker and QEMU available, `tools/qemu-smoke.sh` deploys the signed image
+into a single-guest cluster through the signed `CDEPLOY5` path and runs the
+host Kafka-subset smoke client against it:
+
+```sh
+CHARLOTTE_OS_DIR=../charlotte-os tools/qemu-smoke.sh
+```
+
+`tools/soak/run_soak.sh` runs the independent Python load client for as long as
+needed, against the host front end or a deployed guest:
+
+```sh
+tools/soak/run_soak.sh --host --duration 60 --rate 20
+CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 20
 ```
 
 The conformance tests in `crates/broker-host/tests/charlotte_conformance.rs`

@@ -261,3 +261,31 @@ fn malformed_request_closes_the_connection() {
         "server must close after an unsupported API key"
     );
 }
+
+#[test]
+fn unsupported_api_versions_version_returns_a_downgrade_response() {
+    let mut harness = harness();
+
+    // A modern client may probe a version we do not implement. Kafka expects
+    // a v0 body with UNSUPPORTED_VERSION and the advertised list so the client
+    // can retry with a version the broker accepts.
+    let correlation: i32 = 21;
+    let mut body = Vec::new();
+    body.extend_from_slice(&client::api::API_VERSIONS.to_be_bytes());
+    body.extend_from_slice(&3i16.to_be_bytes());
+    body.extend_from_slice(&correlation.to_be_bytes());
+    body.extend_from_slice(&(-1i16).to_be_bytes());
+    body.push(0);
+    let mut frame = Vec::new();
+    frame.extend_from_slice(&(body.len() as i32).to_be_bytes());
+    frame.extend_from_slice(&body);
+
+    let response = harness.round_trip(&frame);
+    let parsed = client::parse_api_versions(&response, correlation).expect("parse");
+    assert_eq!(parsed.error, UNSUPPORTED_VERSION);
+    assert!(parsed.versions.iter().any(|entry| {
+        entry.api_key == client::api::PRODUCE
+            && entry.min <= client::version::PRODUCE
+            && client::version::PRODUCE <= entry.max
+    }));
+}

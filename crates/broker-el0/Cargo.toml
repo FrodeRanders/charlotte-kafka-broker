@@ -18,3 +18,4 @@ catten-rt.workspace = true
 catten-services.workspace = true
 charlotte-launch.workspace = true
 sitas-charlotte.workspace = true
+sitas-core.workspace = true

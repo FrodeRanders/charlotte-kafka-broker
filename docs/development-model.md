@@ -49,7 +49,7 @@ Hard rules:
 
 | Contract element | Source | Pinned by |
 |---|---|---|
-| CharlotteOS crates (`catten-rt`, `charlotte-launch`, protocols, `charlotte-kafka`) | OS repository | `rev` in the root `Cargo.toml` |
+| CharlotteOS crates (`catten-rt`, `charlotte-launch`, protocols, `charlotte-kafka`) | OS repository | immutable platform tag in the root `Cargo.toml` |
 | Sitas runtime | Sitas repository | `rev` in the root `Cargo.toml` |
 | Platform tooling (builder, SDK export, signer) | OS repository | `charlotte.lock` |
 | Toolchain | OS repository | `rust-toolchain.toml` and `charlotte.lock` |
@@ -59,10 +59,12 @@ Hard rules:
 | Runtime authority | Launch page v2, typed manifest, capability vector, `grantctl` | OS checkout revision |
 | Wire versions | `charlotte-kafka` version table | OS checkout revision |
 
-The pinned OS revision appears in the root `Cargo.toml` git dependencies and in
-`charlotte.lock`. `tools/charlotte-sdk.sh` verifies a checkout or an exported
-SDK against the lock before use, so the crate pin and the platform tooling
-cannot silently diverge.
+The platform is consumed through an immutable git tag
+(`app-platform-81d5064a`), with the exact revision also recorded in
+`charlotte.lock`; the committed `Cargo.lock` resolves the tag to its commit.
+`tools/charlotte-sdk.sh` verifies a checkout or an exported SDK against the
+lock before use, so the crate pin and the platform tooling cannot silently
+diverge. Tags are never moved; a platform change creates a new tag.
 
 Authoritative OS references: `docs/guides/userspace-development.md`,
 `docs/reference/deployment-ingress.md`,
@@ -212,6 +214,20 @@ replacement is generation-fenced by the OS. The application must treat every
 generation as disposable and never keep state that the descriptor does not
 place.
 
+For sustained load, `tools/soak/run_soak.sh` drives the independent Python
+client against either the host front end or a deployed QEMU image:
+
+```sh
+tools/soak/run_soak.sh --host --duration 60 --rate 20
+CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 20
+```
+
+The QEMU path builds the image with the client-reachable advertised address,
+deploys it, keeps the guest alive for the requested duration, and verifies that
+every consumed value matches its log offset. Each partition is bounded to a
+small retained-byte budget so the 4 MiB EL0 heap survives an overnight run;
+the client resynchronizes and reports a gap if it ever falls behind retention.
+
 ## 4. What must change in CharlotteOS
 
 These are OS-side or operations work items, not patches from this repository:
@@ -236,16 +252,28 @@ Implemented:
   `CharlotteReactor`, acquires only its granted `tcpip` connection, publishes
   readiness under its artifact name, listens on port 9092, and serves Kafka
   frames from accepted connections through `broker-engine`;
+- `crates/broker-host/examples/remote_smoke.rs`: the host client that drives
+  the deployed image with the pinned `charlotte-kafka` codec;
 - `tools/charlotte-sdk.sh`: platform resolution by checkout, sparse fetch, or
   SDK tarball, plus `cluster-sign` build;
 - `tools/build-elf.sh` and `tools/package.sh`: the compile and sign stages;
-- CharlotteOS `scripts/build-external-elf.sh` and `scripts/export-app-sdk.sh`:
-  the platform builder and the SDK packaging.
+- `tools/qemu-smoke.sh`: deploy the signed image into a single-guest cluster
+  through the signed `CDEPLOY5` path and run the host smoke client;
+- `tools/soak/`: the independent kafka-python load client and its runner,
+  including the build-time advertised endpoint that lets a host client follow
+  metadata through the QEMU forward;
+- bounded in-memory retention per partition so long runs fit the EL0 heap;
+- CharlotteOS `scripts/build-external-elf.sh`, `scripts/export-app-sdk.sh`,
+  and the parameterized `--deployment-ingress-test` fixture.
+
+The validated run builds the image, signs it, uploads it to the central store,
+notifies `deployd`, lets the node agent fetch, verify, and scoped-launch it,
+observes readiness, and then exercises produce, fetch, and list-offsets from
+the host through a SLIRP forward.
 
 Still open:
 
-- EL0 execution under QEMU with a `CDEPLOY5` descriptor;
-- connector interop through the deployment ingress and readiness observation;
+- in-guest connector interop, blocked on the TLS-listener decision;
 - segmented durable logs and replicated partitions.
 
 The host development loop requires no OS checkout, which is the point of the

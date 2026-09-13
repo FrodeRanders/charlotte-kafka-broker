@@ -42,6 +42,7 @@ pub(crate) fn spawn_partition_shard<R>(
     parker: Arc<dyn ShardParker>,
     receiver: ShardReceiver<PartitionCommand>,
     park_timeout: Duration,
+    partition_max_bytes: Option<usize>,
 ) where
     R: ShardRuntime + ?Sized,
 {
@@ -51,7 +52,7 @@ pub(crate) fn spawn_partition_shard<R>(
         ShardPlacement::Sequential,
         Box::new(move || {
             let mut executor = ShardExecutor::new(reactor).with_idle_wait(Some(park_timeout));
-            executor.spawn(partition_task(receiver, catalog, parker));
+            executor.spawn(partition_task(receiver, catalog, parker, partition_max_bytes));
             executor.run();
         }),
     );
@@ -61,6 +62,7 @@ async fn partition_task(
     mut receiver: ShardReceiver<PartitionCommand>,
     catalog: Arc<TopicCatalog>,
     parker: Arc<dyn ShardParker>,
+    partition_max_bytes: Option<usize>,
 ) {
     let mut logs: BTreeMap<(Vec<u8>, i32), PartitionLog> = BTreeMap::new();
 
@@ -75,7 +77,9 @@ async fn partition_task(
                 let result = if let Err(error) = catalog.check_partition(&topic, partition) {
                     PartitionResult::Failed(error)
                 } else {
-                    let log = logs.entry((topic, partition)).or_default();
+                    let log = logs
+                        .entry((topic, partition))
+                        .or_insert_with(|| new_log(partition_max_bytes));
                     match log.append_data(&records) {
                         Ok(base_offset) => PartitionResult::Produced {
                             base_offset,
@@ -96,7 +100,9 @@ async fn partition_task(
                 let result = if let Err(error) = catalog.check_partition(&topic, partition) {
                     PartitionResult::Failed(error)
                 } else {
-                    let log = logs.entry((topic, partition)).or_default();
+                    let log = logs
+                        .entry((topic, partition))
+                        .or_insert_with(|| new_log(partition_max_bytes));
                     match log.fetch(offset, max_records, max_bytes) {
                         Ok(window) => PartitionResult::Fetched(window),
                         Err(error) => PartitionResult::Failed(error),
@@ -113,7 +119,9 @@ async fn partition_task(
                 let result = if let Err(error) = catalog.check_partition(&topic, partition) {
                     PartitionResult::Failed(error)
                 } else {
-                    let log = logs.entry((topic, partition)).or_default();
+                    let log = logs
+                        .entry((topic, partition))
+                        .or_insert_with(|| new_log(partition_max_bytes));
                     PartitionResult::Offset(log.list_offset(earliest))
                 };
                 respond(&reply, parker.as_ref(), result);
@@ -125,6 +133,14 @@ async fn partition_task(
                 return;
             }
         }
+    }
+}
+
+/// Creates the partition log for one `(topic, partition)` owned by a shard.
+fn new_log(partition_max_bytes: Option<usize>) -> PartitionLog {
+    match partition_max_bytes {
+        Some(max_bytes) => PartitionLog::with_max_bytes(max_bytes),
+        None => PartitionLog::new(),
     }
 }
 

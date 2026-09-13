@@ -35,6 +35,7 @@ pub use request::{
     Request,
     RequestBody,
     decode_request,
+    peek_header,
 };
 pub use response::{
     BrokerMetadata,
@@ -51,6 +52,7 @@ pub use response::{
     ProduceTopicResult,
     TopicMetadata,
     encode_api_versions,
+    encode_api_versions_error,
     encode_fetch,
     encode_list_offsets,
     encode_metadata,

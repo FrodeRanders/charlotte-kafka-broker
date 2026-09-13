@@ -96,6 +96,21 @@ tools/build-elf.sh
 tools/package.sh sign
 ```
 
+With Docker and QEMU available, the end-to-end deployment check is:
+
+```bash
+CHARLOTTE_OS_DIR=<charlotte-os-dir> tools/qemu-smoke.sh
+```
+
+The independent Python load client lives under `tools/soak/`; it must stay
+independent of the broker implementation (kafka-python as a black-box client)
+and is not part of any crate. Its runner validates the deployed image under
+sustained load:
+
+```bash
+CHARLOTTE_OS_DIR=<charlotte-os-dir> tools/soak/run_soak.sh --duration 60 --rate 5
+```
+
 When touching `broker-core`, cover append/fetch boundaries, offset exhaustion,
 unknown topics/partitions, and empty or oversized appends. When touching
 `broker-runtime`, cover success, full mailboxes, shard shutdown, and reply

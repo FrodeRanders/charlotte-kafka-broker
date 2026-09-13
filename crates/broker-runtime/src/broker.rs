@@ -74,6 +74,8 @@ pub struct BrokerConfig {
     pub park_timeout: Duration,
     /// Retry budget for mailbox sends and reply waits.
     pub max_retries: u32,
+    /// Optional approximate retained-byte budget per partition.
+    pub partition_max_bytes: Option<usize>,
 }
 
 impl BrokerConfig {
@@ -85,6 +87,7 @@ impl BrokerConfig {
             mailbox_capacity: DEFAULT_MAILBOX_CAPACITY,
             park_timeout: DEFAULT_PARK_TIMEOUT,
             max_retries: DEFAULT_MAX_RETRIES,
+            partition_max_bytes: None,
         }
     }
 
@@ -98,6 +101,12 @@ impl BrokerConfig {
     pub fn with_wait_policy(mut self, park_timeout: Duration, max_retries: u32) -> Self {
         self.park_timeout = park_timeout;
         self.max_retries = max_retries;
+        self
+    }
+
+    /// Bounds each partition to an approximate retained-byte budget.
+    pub fn with_partition_max_bytes(mut self, max_bytes: usize) -> Self {
+        self.partition_max_bytes = Some(max_bytes);
         self
     }
 }
@@ -147,6 +156,7 @@ impl Broker {
                 Arc::clone(&parker),
                 receiver,
                 config.park_timeout,
+                config.partition_max_bytes,
             );
         }
 

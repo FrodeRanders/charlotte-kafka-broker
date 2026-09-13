@@ -163,8 +163,21 @@ pub fn encode_api_versions(
     correlation_id: i32,
     versions: &[(i16, i16, i16)],
 ) -> Result<Vec<u8>, Error> {
+    encode_api_versions_error(correlation_id, NO_ERROR, versions)
+}
+
+/// Encodes an ApiVersions v0 response with an explicit error code.
+///
+/// Kafka treats ApiVersions specially: a broker that does not implement the
+/// requested version answers with this v0 body and `UNSUPPORTED_VERSION`, and
+/// the client retries with the advertised version.
+pub fn encode_api_versions_error(
+    correlation_id: i32,
+    error: i16,
+    versions: &[(i16, i16, i16)],
+) -> Result<Vec<u8>, Error> {
     let mut encoder = Encoder::response(correlation_id);
-    encoder.i16(NO_ERROR);
+    encoder.i16(error);
     encoder.array_len(versions.len())?;
     for (api_key, min, max) in versions {
         encoder.i16(*api_key);

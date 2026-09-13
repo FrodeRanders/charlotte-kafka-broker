@@ -95,14 +95,20 @@ watermark.
 - append: assigns monotonically increasing offsets and returns the base offset;
 - fetch: returns records from the requested offset, bounded by record count and
   approximate byte count, plus the current high watermark;
-- list offsets: earliest is the log start offset, latest is the high watermark;
+- list offsets: earliest is the retained start offset, latest is the high
+  watermark;
 - out-of-range reads are an error, not an empty result;
+- a partition may be bounded by an approximate retained-byte budget. When the
+  budget is exceeded, the oldest batches are dropped and the retained start
+  advances; a reader below the start receives `OFFSET_OUT_OF_RANGE` and must
+  resynchronize. The newest batch is always retained;
 - readers of records always receive owned copies; no reference into shard state
   escapes.
 
-Transactions, compaction, retention, and timestamp indexes are out of scope for
-the first milestones. Fetch `isolation_level` is accepted and treated as
-read-uncommitted because no aborted-transaction state exists yet.
+Transactions, compaction, and timestamp indexes are out of scope for the first
+milestones. Fetch `isolation_level` is accepted and treated as read-uncommitted
+because no aborted-transaction state exists yet. Retention is an in-memory byte
+budget only; durable segment deletion arrives with the storage milestone.
 
 ## 5. Wire subset
 
@@ -223,9 +229,9 @@ the same conformance expectations.
 - **M1 - host broker (done):** transport-free dispatch engine, plain TCP front
   end, and conformance against `charlotte-kafka` request builders and response
   parsers.
-- **M2 - EL0 and deployment:** `broker.elf` built through the out-of-tree
+- **M2 - EL0 and deployment (done):** `broker.elf` built through the out-of-tree
   packaging flow, deployed with a signed `CDEPLOY5` descriptor, and exercised
-  by the in-guest connector.
+  from the host by the pinned client codec.
 - **M3 - durable logs:** segmented storage with crash-recovery checks.
 - **M4 - replicated partitions:** followers, high watermark replication, and
   leader failover against the existing distributed fixtures.

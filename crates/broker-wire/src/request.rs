@@ -139,6 +139,24 @@ pub struct Request {
     pub body: RequestBody,
 }
 
+/// Reads only the fixed request header fields.
+///
+/// This exists for the ApiVersions downgrade response: a request using a
+/// version this broker does not implement cannot be decoded, but the error
+/// response still needs its correlation id. The header fields used here are
+/// identical in the v1 and flexible v2 request headers.
+pub fn peek_header(frame: &[u8]) -> Result<Header, Error> {
+    if frame.len() < 12 {
+        return Err(Error::Incomplete);
+    }
+    Ok(Header {
+        api_key: i16::from_be_bytes(frame[4..6].try_into().map_err(|_| Error::Invalid)?),
+        api_version: i16::from_be_bytes(frame[6..8].try_into().map_err(|_| Error::Invalid)?),
+        correlation_id: i32::from_be_bytes(frame[8..12].try_into().map_err(|_| Error::Invalid)?),
+        client_id: None,
+    })
+}
+
 /// Decodes one length-prefixed Kafka request frame.
 ///
 /// # Errors

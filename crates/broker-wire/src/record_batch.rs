@@ -102,7 +102,13 @@ pub fn encode_record_batch(base_offset: i64, records: &[Record]) -> Result<Vec<u
     Ok(batch)
 }
 
-/// Decodes every record batch in a produce request's record set.
+/// Decodes every record batch or legacy message set in a produce request.
+///
+/// Kafka brokers accept message format v0/v1 sets in Produce requests and
+/// up-convert them; independent clients such as kafka-python still send them
+/// inside Produce v3. The record-set magic byte sits at offset 16 in both the
+/// v2 record batch and the legacy message set layouts, so the format is
+/// detected before decoding.
 ///
 /// # Errors
 ///
@@ -111,6 +117,17 @@ pub fn encode_record_batch(base_offset: i64, records: &[Record]) -> Result<Vec<u
 /// batches, and [`Error::Invalid`] or [`Error::Incomplete`] for malformed
 /// input.
 pub fn decode_record_batches(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
+    if bytes.is_empty() {
+        return Err(Error::Invalid);
+    }
+    match bytes.get(16) {
+        Some(2) => decode_v2_record_set(bytes),
+        Some(0) | Some(1) => decode_legacy_message_set(bytes),
+        _ => Err(Error::UnsupportedVersion),
+    }
+}
+
+fn decode_v2_record_set(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
     if bytes.is_empty() {
         return Err(Error::Invalid);
     }
@@ -197,6 +214,90 @@ pub fn decode_record_batches(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
         }
     }
     Ok(records)
+}
+
+/// Decodes a legacy message format v0/v1 set.
+fn decode_legacy_message_set(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
+    let mut decoder = Decoder::new(bytes);
+    let mut records = Vec::new();
+    while !decoder.done() {
+        let _offset = decoder.i64()?;
+        let message_size = decoder.i32()?;
+        if message_size < 14 {
+            return Err(Error::Invalid);
+        }
+        let message = decoder.take(message_size as usize)?;
+        let expected_crc = u32::from_be_bytes(message[..4].try_into().map_err(|_| Error::Invalid)?);
+        if crc32_ieee(&message[4..]) != expected_crc {
+            return Err(Error::Checksum);
+        }
+        let magic = message[4];
+        if magic > 1 {
+            return Err(Error::UnsupportedVersion);
+        }
+        let attributes = message[5];
+        if attributes & 0x07 != 0 {
+            return Err(Error::UnsupportedVersion);
+        }
+        let mut cursor = 6usize;
+        let timestamp_ms = if magic == 1 {
+            let end = cursor + 8;
+            let value = message.get(cursor..end).ok_or(Error::Incomplete)?;
+            cursor = end;
+            i64::from_be_bytes(value.try_into().map_err(|_| Error::Invalid)?)
+        } else {
+            0
+        };
+        let key = legacy_optional_bytes(message, &mut cursor)?;
+        let value = legacy_optional_bytes(message, &mut cursor)?;
+        if cursor != message.len() {
+            return Err(Error::Invalid);
+        }
+        records.push(RecordData {
+            timestamp_ms,
+            key,
+            value,
+        });
+    }
+    Ok(records)
+}
+
+fn legacy_optional_bytes(message: &[u8], cursor: &mut usize) -> Result<Option<Vec<u8>>, Error> {
+    let end = *cursor + 4;
+    let length = i32::from_be_bytes(
+        message
+            .get(*cursor..end)
+            .ok_or(Error::Incomplete)?
+            .try_into()
+            .map_err(|_| Error::Invalid)?,
+    );
+    *cursor = end;
+    if length == -1 {
+        return Ok(None);
+    }
+    if length < 0 {
+        return Err(Error::Invalid);
+    }
+    let end = *cursor + length as usize;
+    let value = message.get(*cursor..end).ok_or(Error::Incomplete)?;
+    *cursor = end;
+    Ok(Some(value.to_vec()))
+}
+
+/// CRC32 (IEEE) used by legacy v0/v1 message sets.
+fn crc32_ieee(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
 }
 
 fn write_optional_bytes(output: &mut Vec<u8>, value: Option<&[u8]>) -> Result<(), Error> {
@@ -296,5 +397,61 @@ mod tests {
     #[test]
     fn empty_record_set_is_rejected() {
         assert_eq!(decode_record_batches(&[]), Err(Error::Invalid));
+    }
+
+    fn legacy_message_set(
+        magic: i8,
+        timestamp_ms: i64,
+        key: Option<&[u8]>,
+        value: Option<&[u8]>,
+    ) -> Vec<u8> {
+        let mut body = alloc::vec![magic as u8, 0];
+        if magic == 1 {
+            body.extend_from_slice(&timestamp_ms.to_be_bytes());
+        }
+        for field in [key, value] {
+            match field {
+                Some(bytes) => {
+                    body.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+                    body.extend_from_slice(bytes);
+                }
+                None => body.extend_from_slice(&(-1i32).to_be_bytes()),
+            }
+        }
+        let crc = crc32_ieee(&body);
+        let mut message = crc.to_be_bytes().to_vec();
+        message.extend_from_slice(&body);
+        let mut set = 0i64.to_be_bytes().to_vec();
+        set.extend_from_slice(&(message.len() as i32).to_be_bytes());
+        set.extend_from_slice(&message);
+        set
+    }
+
+    #[test]
+    fn legacy_message_sets_decode() {
+        let v1 = legacy_message_set(1, 1_234, Some(b"k"), Some(b"value"));
+        let records = decode_record_batches(&v1).expect("v1 decode");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].timestamp_ms, 1_234);
+        assert_eq!(records[0].key.as_deref(), Some(b"k".as_slice()));
+        assert_eq!(records[0].value.as_deref(), Some(b"value".as_slice()));
+
+        let v0 = legacy_message_set(0, 0, None, Some(b"legacy"));
+        let records = decode_record_batches(&v0).expect("v0 decode");
+        assert_eq!(records[0].timestamp_ms, 0);
+        assert!(records[0].key.is_none());
+        assert_eq!(records[0].value.as_deref(), Some(b"legacy".as_slice()));
+    }
+
+    #[test]
+    fn legacy_crc_mismatch_is_rejected() {
+        let mut v1 = legacy_message_set(1, 1, None, Some(b"value"));
+        *v1.last_mut().expect("non-empty") ^= 0xff;
+        assert_eq!(decode_record_batches(&v1), Err(Error::Checksum));
+    }
+
+    #[test]
+    fn crc32_ieee_matches_known_vector() {
+        assert_eq!(crc32_ieee(b"123456789"), 0xcbf4_3926);
     }
 }

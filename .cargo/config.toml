@@ -1,0 +1,4 @@
+[net]
+# The pinned CharlotteOS dependency is a large repository; use the system git
+# for fetches so cargo does not depend on libgit2 network behavior.
+git-fetch-with-cli = true

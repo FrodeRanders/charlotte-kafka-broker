@@ -103,18 +103,39 @@ struct StoredBatch {
 }
 
 /// One partition's ordered record history.
+///
+/// A log may be bounded by an approximate retained-byte budget. When the
+/// budget is exceeded, the oldest batches are dropped and [`start_offset`]
+/// advances; readers below the retained start receive
+/// [`LogError::OffsetOutOfRange`] and must resynchronize.
+///
+/// [`start_offset`]: PartitionLog::start_offset
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct PartitionLog {
     batches: Vec<StoredBatch>,
     next_offset: i64,
+    max_bytes: Option<usize>,
+    retained_bytes: usize,
 }
 
 impl PartitionLog {
-    /// Creates an empty log whose first assigned offset is zero.
+    /// Creates an unbounded log whose first assigned offset is zero.
     pub const fn new() -> Self {
         Self {
             batches: Vec::new(),
             next_offset: 0,
+            max_bytes: None,
+            retained_bytes: 0,
+        }
+    }
+
+    /// Creates a log that drops the oldest batches above `max_bytes`.
+    pub const fn with_max_bytes(max_bytes: usize) -> Self {
+        Self {
+            batches: Vec::new(),
+            next_offset: 0,
+            max_bytes: Some(max_bytes),
+            retained_bytes: 0,
         }
     }
 
@@ -124,8 +145,11 @@ impl PartitionLog {
     }
 
     /// The earliest offset retained by this log.
-    pub const fn start_offset(&self) -> i64 {
-        0
+    pub fn start_offset(&self) -> i64 {
+        match self.batches.first() {
+            Some(batch) => batch.base_offset,
+            None => self.next_offset,
+        }
     }
 
     /// Total number of stored records.
@@ -159,10 +183,13 @@ impl PartitionLog {
             });
         }
         self.next_offset = base_offset + records.len() as i64;
-        self.batches.push(StoredBatch {
+        let batch = StoredBatch {
             base_offset,
             records,
-        });
+        };
+        self.retained_bytes += batch_size(&batch);
+        self.batches.push(batch);
+        self.enforce_retention();
         Ok(base_offset)
     }
 
@@ -222,11 +249,25 @@ impl PartitionLog {
     }
 
     /// Reads the earliest or latest offset of this partition.
-    pub const fn list_offset(&self, earliest: bool) -> i64 {
+    pub fn list_offset(&self, earliest: bool) -> i64 {
         if earliest {
             self.start_offset()
         } else {
             self.next_offset
+        }
+    }
+
+    /// Drops the oldest batches while the retained-byte budget is exceeded.
+    ///
+    /// The newest batch is always retained, so an append larger than the
+    /// budget is still readable instead of immediately discarded.
+    fn enforce_retention(&mut self) {
+        let Some(limit) = self.max_bytes else {
+            return;
+        };
+        while self.batches.len() > 1 && self.retained_bytes > limit {
+            let removed = self.batches.remove(0);
+            self.retained_bytes = self.retained_bytes.saturating_sub(batch_size(&removed));
         }
     }
 
@@ -251,6 +292,11 @@ fn record_size(record: &Record) -> usize {
     RECORD_OVERHEAD_BYTES
         + record.key.as_ref().map_or(0, Vec::len)
         + record.value.as_ref().map_or(0, Vec::len)
+}
+
+/// Approximate stored size of one batch.
+fn batch_size(batch: &StoredBatch) -> usize {
+    batch.records.iter().map(record_size).sum()
 }
 
 #[cfg(test)]
@@ -334,5 +380,32 @@ mod tests {
         assert_eq!(window.records.len(), 2);
         assert_eq!(window.records[0].offset, 1);
         assert_eq!(window.records[1].offset, 2);
+    }
+
+    #[test]
+    fn retention_drops_oldest_batches_and_advances_the_start() {
+        let budget = RECORD_OVERHEAD_BYTES + 1;
+        let mut log = PartitionLog::with_max_bytes(budget);
+        assert_eq!(log.append(&[input(b"a")]), Ok(0));
+        assert_eq!(log.start_offset(), 0);
+        assert_eq!(log.append(&[input(b"b")]), Ok(1));
+        assert_eq!(log.start_offset(), 1, "the oldest batch was evicted");
+        assert_eq!(log.list_offset(true), 1);
+        assert_eq!(log.list_offset(false), 2);
+        assert_eq!(log.high_watermark(), 2);
+        assert_eq!(log.record_count(), 1);
+        assert_eq!(log.fetch(0, 10, 1024), Err(LogError::OffsetOutOfRange));
+        let window = log.fetch(1, 10, 1024).expect("fetch retained record");
+        assert_eq!(window.records.len(), 1);
+        assert_eq!(window.records[0].value.as_deref(), Some(b"b".as_slice()));
+    }
+
+    #[test]
+    fn retention_keeps_the_newest_batch_even_over_budget() {
+        let mut log = PartitionLog::with_max_bytes(1);
+        log.append(&[input(b"a"), input(b"b")]).expect("append");
+        assert_eq!(log.start_offset(), 0);
+        assert_eq!(log.record_count(), 2);
+        assert_eq!(log.fetch(0, 10, 4096).expect("fetch").records.len(), 2);
     }
 }

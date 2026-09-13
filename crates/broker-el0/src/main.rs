@@ -15,6 +15,8 @@
 extern crate alloc;
 
 use alloc::{
+    boxed::Box,
+    sync::Arc,
     vec,
     vec::Vec,
 };
@@ -50,6 +52,11 @@ use catten_services::{
 };
 use charlotte_launch::deployment;
 use sitas_charlotte::CharlotteReactor;
+use sitas_core::{
+    placement::ShardPlacement,
+    shard::ShardId,
+    shard_runtime::ShardRuntime,
+};
 
 const SHARD_COUNT: usize = 2;
 const LISTEN_PORT: u16 = 9092;
@@ -57,8 +64,40 @@ const ACCEPT_POLL_MS: u64 = 25;
 const MAX_FRAME_LEN: usize = 1024 * 1024;
 const TOPIC: &[u8] = b"events";
 const PARTITIONS: i32 = 4;
+const PARTITION_MAX_BYTES: usize = 64 * 1024;
 const INTERFACE: u64 = catten_services::name(b"KBRK");
 const VERSION: u32 = 1;
+
+/// Address reported in metadata. `BROKER_ADVERTISE_HOST`/`BROKER_ADVERTISE_PORT`
+/// override it at build time so a broker behind a host forward can advertise
+/// the client-reachable endpoint.
+const ADVERTISE_HOST: &[u8] = match option_env!("BROKER_ADVERTISE_HOST") {
+    Some(host) => host.as_bytes(),
+    None => b"0.0.0.0",
+};
+const ADVERTISE_PORT: i32 = match option_env!("BROKER_ADVERTISE_PORT") {
+    Some(port) => decimal_port(port),
+    None => LISTEN_PORT as i32,
+};
+
+const fn decimal_port(text: &str) -> i32 {
+    let bytes = text.as_bytes();
+    let mut value = 0i32;
+    let mut index = 0;
+    while index < bytes.len() {
+        let digit = bytes[index];
+        if digit < b'0' || digit > b'9' {
+            return LISTEN_PORT as i32;
+        }
+        value = value * 10 + (digit - b'0') as i32;
+        index += 1;
+    }
+    if value > 0 && value <= 65535 {
+        value
+    } else {
+        LISTEN_PORT as i32
+    }
+}
 
 fn main(ctx: Context) -> ! {
     serve(&ctx).complete()
@@ -74,16 +113,17 @@ fn serve(ctx: &Context) -> ShutdownRequest {
                 name: TOPIC.to_vec(),
                 partitions: PARTITIONS,
             }],
-        ),
+        )
+        .with_partition_max_bytes(PARTITION_MAX_BYTES),
     )
     .unwrap_or_else(|error| {
         logln!("[broker] shard startup failed: {:?}", error);
         domain_abort()
     });
-    let engine = Engine::new(
+    let engine = Arc::new(Engine::new(
         broker,
-        EngineConfig::new(BrokerIdentity::new(0, b"0.0.0.0", LISTEN_PORT as i32)),
-    );
+        EngineConfig::new(BrokerIdentity::new(0, ADVERTISE_HOST, ADVERTISE_PORT)),
+    ));
     logln!("[broker] {} partition shards started", SHARD_COUNT);
 
     let bootstrap = ctx.bootstrap_connection().unwrap_or_else(|| domain_abort());
@@ -118,8 +158,14 @@ fn serve(ctx: &Context) -> ShutdownRequest {
         }
     };
 
+    // One connection handler thread is spawned per accepted connection, and
+    // each handler borrows the tcpip connection. Leaking this one capability
+    // for the process lifetime gives the handlers a 'static borrow instead of
+    // duplicating or reference-counting the underlying capability.
+    let tcp: &'static Connection = Box::leak(Box::new(tcp));
+
     logln!("[broker] serving kafka on tcp port {}", LISTEN_PORT);
-    accept_loop(ctx, &engine, &tcp, &endpoint)
+    accept_loop(ctx, &reactor, &engine, tcp, &endpoint)
 }
 
 fn descriptor_name(descriptor: &LaunchMemoryRef<'_>) -> Vec<u8> {
@@ -130,8 +176,9 @@ fn descriptor_name(descriptor: &LaunchMemoryRef<'_>) -> Vec<u8> {
 
 fn accept_loop(
     ctx: &Context,
-    engine: &Engine,
-    tcp: &Connection,
+    reactor: &CharlotteReactor,
+    engine: &Arc<Engine>,
+    tcp: &'static Connection,
     _readiness: &Endpoint,
 ) -> ShutdownRequest {
     loop {
@@ -141,11 +188,13 @@ fn accept_loop(
 
         let listener =
             OwnedSocket::open(tcp.as_ref(), socket::DOMAIN_TCP).unwrap_or_else(|_| domain_abort());
-        if listen(tcp, &listener) != 0 {
-            logln!("[broker] listen on port {} failed", LISTEN_PORT);
+        let listen_result = listen(tcp, &listener);
+        if listen_result != 0 {
+            logln!("[broker] listen on port {} failed ({})", LISTEN_PORT, listen_result);
             sleep_ms(ACCEPT_POLL_MS);
             continue;
         }
+        logln!("[broker] listening on tcp port {}", LISTEN_PORT);
 
         loop {
             if let Some(request) = ctx.lifecycle().shutdown_requested() {
@@ -167,9 +216,15 @@ fn accept_loop(
             sleep_ms(ACCEPT_POLL_MS);
         }
 
-        if let Some(request) = serve_connection(ctx, engine, listener) {
-            return request;
-        }
+        let engine = Arc::clone(engine);
+        let ctx = *ctx;
+        let _ = reactor.spawn_shard(
+            ShardId(0),
+            ShardPlacement::Sequential,
+            Box::new(move || {
+                let _ = serve_connection(&ctx, &engine, listener);
+            }),
+        );
     }
 }
 

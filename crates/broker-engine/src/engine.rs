@@ -34,10 +34,12 @@ use broker_wire::{
     TopicMetadata,
     decode_request,
     encode_api_versions,
+    encode_api_versions_error,
     encode_fetch,
     encode_list_offsets,
     encode_metadata,
     encode_produce,
+    peek_header,
     protocol::{
         NO_ERROR,
         OFFSET_OUT_OF_RANGE,
@@ -45,6 +47,7 @@ use broker_wire::{
         UNKNOWN_SERVER_ERROR,
         UNKNOWN_TOPIC_OR_PARTITION,
         UNSUPPORTED_VERSION,
+        api,
     },
 };
 
@@ -129,8 +132,25 @@ impl Engine {
     /// Returns the decode or encode error. A malformed frame has no usable
     /// correlation id, so the caller is expected to close the connection.
     pub fn handle_frame(&self, frame: &[u8]) -> Result<Vec<u8>, Error> {
-        let request = decode_request(frame)?;
-        self.handle_request(request)
+        match decode_request(frame) {
+            Ok(request) => self.handle_request(request),
+            Err(Error::UnsupportedVersion) => {
+                // Kafka's ApiVersions downgrade: answer a known API key using
+                // a version we do not implement with a v0 error body so the
+                // client can retry with the advertised version.
+                if let Ok(header) = peek_header(frame)
+                    && header.api_key == api::API_VERSIONS
+                {
+                    return encode_api_versions_error(
+                        header.correlation_id,
+                        UNSUPPORTED_VERSION,
+                        SUPPORTED_VERSIONS,
+                    );
+                }
+                Err(Error::UnsupportedVersion)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Dispatches one decoded request.

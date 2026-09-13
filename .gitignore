@@ -8,3 +8,6 @@
 # Editor and OS noise
 .idea/
 .DS_Store
+
+# Python load-client environment
+/tools/soak/.venv/
