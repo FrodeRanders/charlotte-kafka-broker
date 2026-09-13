@@ -2,13 +2,18 @@
 name = "broker-host"
 version.workspace = true
 edition.workspace = true
-description = "Host-side test harness for the CharlotteOS Kafka broker"
+description = "Host TCP front end and conformance tests for the CharlotteOS Kafka broker"
 
 [lib]
 test = true
 bench = false
 
+[dependencies]
+broker-engine.workspace = true
+broker-runtime.workspace = true
+broker-wire.workspace = true
+
 [dev-dependencies]
 broker-core.workspace = true
-broker-runtime.workspace = true
+charlotte-kafka.workspace = true
 sitas-unix.workspace = true

@@ -9,6 +9,11 @@ machinery with a workload that has genuine concurrency and distribution
 semantics. It is not a production broker and not a place to grow general
 infrastructure frameworks.
 
+The layers are `broker-wire` (bounded codec), `broker-engine` (dispatch and
+error mapping), `broker-runtime` (Sitas shard services), and `broker-core`
+(partition log and catalog). `broker-host` is the only host-specific crate: it
+provides the TCP front end and the conformance tests.
+
 Read [docs/architecture.md](docs/architecture.md) before changing protocol,
 sharding, storage, or lifecycle behavior.
 
@@ -20,11 +25,13 @@ and updates `docs/architecture.md` at the same time.
 1. Only the owning shard may mutate a partition log or other service state.
 2. Cross-shard interaction is explicit typed messages carrying owned values.
 3. Do not hide service state behind `Arc<Mutex<..>>` as the normal model.
-4. `broker-core` and `broker-runtime` are `no_std + alloc` and do not depend on
-   a transport, host OS, or storage backend.
+4. `broker-core`, `broker-wire`, `broker-engine`, and `broker-runtime` are
+   `no_std + alloc` and do not depend on a transport, host OS, or storage
+   backend.
 5. `broker-core` is pure state: no clocks, channels, threads, or I/O.
 6. The wire subset is bounded and versioned. Adding an API or version requires
-   updating the table in `docs/architecture.md` first.
+   updating the table in `docs/architecture.md` and keeping the
+   `charlotte-kafka` conformance suite in `broker-host` green.
 7. Long waits park on the runtime parker; no busy-spin loops.
 8. Every reply channel is bounded and every wait has a bounded retry budget.
 9. Values that cross a shard boundary are owned; borrowed record data never
@@ -57,7 +64,9 @@ cargo doc --no-deps
 When touching `broker-core`, cover append/fetch boundaries, offset exhaustion,
 unknown topics/partitions, and empty or oversized appends. When touching
 `broker-runtime`, cover success, full mailboxes, shard shutdown, and reply
-timeouts where practical.
+timeouts where practical. When touching `broker-wire` or `broker-engine`,
+extend `crates/broker-host/tests/charlotte_conformance.rs` so the change is
+validated by the real client codec, not only by this repository's decoder.
 
 ## Documentation responsibilities
 

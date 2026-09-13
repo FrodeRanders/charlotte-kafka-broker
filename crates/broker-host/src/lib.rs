@@ -1,6 +1,13 @@
-//! Host-side test harness for the broker crates.
+//! Host-side front end and conformance tests for the broker crates.
 //!
-//! This crate exists so `broker-runtime` can be exercised over the
-//! `sitas-unix` backend with plain `cargo test`. The service code under test
-//! is the same `no_std` code that will run over `sitas-charlotte` at EL0; the
-//! tests live in `tests/`.
+//! [`server`] adds a plain TCP listener that feeds the engine on a host; the
+//! conformance tests drive that listener with the real CharlotteOS Kafka
+//! client codec. The service code under test remains the same `no_std` code
+//! that will run over `sitas-charlotte` at EL0.
+
+pub mod server;
+
+pub use server::{
+    ServerHandle,
+    start,
+};

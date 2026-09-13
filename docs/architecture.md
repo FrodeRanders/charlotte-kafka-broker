@@ -23,6 +23,10 @@ the CharlotteOS connector already uses.
    +---------+----------+
              |
    +---------v----------+
+   |   broker-engine    |  request dispatch + Kafka error mapping
+   +---------+----------+
+             |
+   +---------v----------+
    |   broker-runtime   |  Sitas shards, routing, replies, lifecycle
    +---------+----------+
              |
@@ -30,7 +34,7 @@ the CharlotteOS connector already uses.
    |    broker-core     |  partition log + topic catalog (pure state)
    +---------+----------+
              |
-   storage and transport capabilities supplied by CharlotteOS
+    storage and transport capabilities supplied by CharlotteOS
 ```
 
 - `broker-core` never performs I/O and never observes time. It is deterministic
@@ -38,8 +42,11 @@ the CharlotteOS connector already uses.
 - `broker-runtime` owns threads and channels through the `sitas-core`
   `ShardRuntime` seam. It does not know how a request arrived or where records
   will be stored.
-- `broker-wire` maps bytes to the typed operations of `broker-core` and back.
-  It does not own shards or state.
+- `broker-engine` maps decoded requests onto broker operations and maps
+  per-item failures to Kafka error codes. It owns no sockets and no threads,
+  so the host TCP front end and the future EL0 service share it.
+- `broker-wire` maps bytes to typed requests and responses. It does not own
+  shards or state.
 
 ## 3. Execution model
 
@@ -120,6 +127,26 @@ batches in one partition entry; each decoded batch is appended as one atomic
 unit. Fetch responses re-encode stored records into a batch whose base offset is
 the first returned record, preserving Kafka offset semantics.
 
+### Dispatch and error mapping
+
+`broker-engine` handles one decoded request at a time and answers with one
+response frame. A failure that applies to one topic or partition becomes a
+Kafka error code in that entry; the connection stays open. Decode and encode
+failures fail the frame, and the front end closes the connection because a
+malformed request has no trustworthy correlation id.
+
+| Failure | Kafka error code |
+|---|---|
+| Unknown topic or partition | `UNKNOWN_TOPIC_OR_PARTITION` (3) |
+| Fetch offset beyond the high watermark | `OFFSET_OUT_OF_RANGE` (1) |
+| Transactional produce (`transactional_id` set) | `UNSUPPORTED_VERSION` (35) |
+| ListOffsets timestamp other than -2 or -1 | `UNSUPPORTED_VERSION` (35) |
+| Any other runtime or mailbox failure | `UNKNOWN_SERVER_ERROR` (-1) |
+
+Fetch honors the smaller of the per-partition and request byte caps, bounded by
+the engine's own maximum. `max_wait_ms` and `min_bytes` are accepted and
+ignored: the broker answers with whatever is available immediately.
+
 ## 6. Storage direction
 
 The first implementation keeps logs in memory so protocol and shard semantics
@@ -155,7 +182,8 @@ partition and stores `NO_ERROR` data locally.
 ## 8. CharlotteOS integration
 
 - The EL0 binary follows the `catten-user` build pattern and is signed with the
-  cluster signing tool.
+  cluster signing tool. The dispatch logic is `broker-engine`, so only the
+  socket loop differs from the host front end.
 - Service ELFs are installed by logical name from the object store; the first
   integration adds one gated `BOOTSTRAP_ELFS` entry or uses the signed
   deployment path.
@@ -174,16 +202,21 @@ partition and stores `NO_ERROR` data locally.
   state live in one replicated controller?
 - How should `acks=-1` be surfaced before a replica quorum exists: fail fast or
   append locally with a degraded acknowledgement?
-- Does the EL0 transport use the existing `charlotte-kafka` client codec for
-  conformance tests, or a dedicated byte-level golden corpus shared by both?
+
+The host conformance question is settled:
+`crates/broker-host/tests/charlotte_conformance.rs` uses the pinned
+`charlotte-kafka` request builders and response parsers as the oracle over the
+TCP front end. The EL0 service should run the same dispatch (the engine) under
+the same conformance expectations.
 
 ## 10. Milestones
 
-- **M0 - foundation (this change):** workspace, deterministic partition log,
+- **M0 - foundation (done):** workspace, deterministic partition log,
   shard-per-partition runtime over typed mailboxes, bounded wire subset codec,
   host tests on the `sitas-unix` backend.
-- **M1 - host broker:** TCP front end, request loop, golden conformance against
-  `charlotte-kafka` request builders and response parsers.
+- **M1 - host broker (done):** transport-free dispatch engine, plain TCP front
+  end, and conformance against `charlotte-kafka` request builders and response
+  parsers.
 - **M2 - EL0:** `broker.elf` with a `tcpip` socket capability, signed and
   staged, exercised by the in-guest connector.
 - **M3 - durable logs:** segmented storage with crash-recovery checks.

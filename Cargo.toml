@@ -8,7 +8,9 @@ edition = "2024"
 
 [workspace.dependencies]
 broker-core = { path = "crates/broker-core" }
+broker-engine = { path = "crates/broker-engine" }
 broker-runtime = { path = "crates/broker-runtime" }
 broker-wire = { path = "crates/broker-wire" }
+charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "d639ea3810c0740c192cfdb6976954ff9e734c38" }
 sitas-core = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
 sitas-unix = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9" }

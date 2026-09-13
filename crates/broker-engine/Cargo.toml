@@ -1,0 +1,14 @@
+[package]
+name = "broker-engine"
+version.workspace = true
+edition.workspace = true
+description = "Transport-free request dispatch between the Kafka wire subset and broker shards"
+
+[lib]
+test = true
+bench = false
+
+[dependencies]
+broker-core.workspace = true
+broker-runtime.workspace = true
+broker-wire.workspace = true

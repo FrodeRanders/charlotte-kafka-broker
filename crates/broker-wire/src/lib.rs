@@ -25,7 +25,13 @@ pub use record_batch::{
     encode_record_batch,
 };
 pub use request::{
+    FetchPartition,
+    FetchTopic,
     Header,
+    ListOffsetsPartition,
+    ListOffsetsTopic,
+    ProducePartition,
+    ProduceTopic,
     Request,
     RequestBody,
     decode_request,

@@ -30,14 +30,19 @@ database can reuse.
 ```text
 broker-wire     bounded Kafka subset codec (server side)
       |
+broker-engine   request dispatch and Kafka error mapping
+      |
 broker-runtime  Sitas shard services: partition owners, routing, replies
       |
 broker-core     transport-free partition log and topic catalog
 ```
 
-`broker-core` and `broker-runtime` are `no_std + alloc` and never depend on a
-particular transport, runtime, or storage backend. The same code is intended to
-run under `sitas-unix` on a host for tests and under `sitas-charlotte` at EL0.
+`broker-core`, `broker-wire`, `broker-engine`, and `broker-runtime` are
+`no_std + alloc` and never depend on a particular transport, runtime, or
+storage backend. `broker-host` adds a plain TCP front end and drives the whole
+stack with the real CharlotteOS Kafka client codec. The same service code is
+intended to run under `sitas-unix` on a host for tests and under
+`sitas-charlotte` at EL0.
 
 ## Restricted protocol subset
 
@@ -65,8 +70,9 @@ compression, record headers, and dynamic topic creation.
 |---|---|
 | `crates/broker-core` | Partition log, record model, topic catalog; pure and transport-free |
 | `crates/broker-wire` | Bounded Kafka subset decode/encode, including record batch v2 |
+| `crates/broker-engine` | Transport-free request dispatch and Kafka error mapping |
 | `crates/broker-runtime` | Sitas shard services and the user-facing `Broker` API |
-| `crates/broker-host` | Host-side tests against the `sitas-unix` backend |
+| `crates/broker-host` | Host TCP front end and `charlotte-kafka` conformance tests |
 
 ## Status
 
@@ -74,7 +80,8 @@ compression, record headers, and dynamic topic creation.
 - [x] `broker-core`: in-memory append-only partition logs with offsets
 - [x] `broker-runtime`: shard-per-partition services over typed mailboxes
 - [x] `broker-wire`: restricted request decode and response encode
-- [ ] Host TCP front end and `charlotte-kafka` conformance tests
+- [x] `broker-engine`: dispatch and per-partition error mapping
+- [x] Host TCP front end and `charlotte-kafka` conformance tests
 - [ ] EL0 service on CharlotteOS with a `tcpip` socket capability
 - [ ] Segmented, durable partition logs over the block/object-store protocol
 - [ ] Partition placement and Raft-replicated logs across cluster members
@@ -86,12 +93,18 @@ cargo fmt --all -- --check
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo doc --no-deps
+cargo run --example host_broker   # TCP broker on 127.0.0.1:9092
 ```
 
+The conformance tests in `crates/broker-host/tests/charlotte_conformance.rs`
+build every request with the pinned `charlotte-kafka` client codec and parse
+every response with the same codec, so the broker is checked against the exact
+wire versions the CharlotteOS connector uses.
+
 The workspace pins the same nightly toolchain as CharlotteOS
-(`nightly-2026-07-27`) and pins the Sitas revision in the root `Cargo.toml`.
-`broker-host` is the only crate that knows about a host operating system; the
-other crates are fit for the CharlotteOS EL0 target.
+(`nightly-2026-07-27`) and pins the Sitas and CharlotteOS revisions in the root
+`Cargo.toml`. `broker-host` is the only crate that knows about a host
+operating system; the other crates are fit for the CharlotteOS EL0 target.
 
 ## Integration with CharlotteOS
 
