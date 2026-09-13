@@ -230,6 +230,9 @@ deploys it, keeps the guest alive for the requested duration, and verifies that
 every consumed value matches its log offset. Each partition is bounded to a
 small retained-byte budget so the 4 MiB EL0 heap survives an overnight run;
 the client resynchronizes and reports a gap if it ever falls behind retention.
+The runner creates and repairs its own Python virtualenv on first use
+(`CHARLOTTE_SOAK_PYTHON` selects the interpreter), so a host only needs
+`python3`, Docker, and QEMU.
 
 ## 4. What must change in CharlotteOS
 

@@ -47,11 +47,39 @@ while [ "$#" -gt 0 ]; do
 done
 
 mkdir -p "$BROKER_ROOT/target"
-if [ ! -x "$VENV/bin/python" ]; then
-    echo ">>> creating Python load-client environment"
-    python3 -m venv "$VENV"
-    "$VENV/bin/pip" install --quiet -r "$REQUIREMENTS"
-fi
+
+ensure_client_env() {
+    local python="${CHARLOTTE_SOAK_PYTHON:-python3}"
+    if ! command -v "$python" >/dev/null 2>&1; then
+        echo "error: $python not found; set CHARLOTTE_SOAK_PYTHON to a Python 3 interpreter" >&2
+        exit 1
+    fi
+    if [ ! -x "$VENV/bin/python" ]; then
+        echo ">>> creating Python load-client environment with $python"
+        if ! "$python" -m venv "$VENV"; then
+            echo "error: creating a virtualenv failed" >&2
+            echo "       Debian/Ubuntu: apt install python3-venv" >&2
+            exit 1
+        fi
+    fi
+    # A venv can exist while the dependency install failed or was interrupted;
+    # verify the import and repair instead of trusting the interpreter.
+    if ! "$VENV/bin/python" -c "import kafka" >/dev/null 2>&1; then
+        echo ">>> installing Python load-client dependencies"
+        "$VENV/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1 || true
+        if ! "$VENV/bin/pip" install --quiet -r "$REQUIREMENTS"; then
+            echo "error: installing $REQUIREMENTS failed; check network access" >&2
+            exit 1
+        fi
+    fi
+    if ! "$VENV/bin/python" -c "import kafka" >/dev/null 2>&1; then
+        echo "error: kafka-python is still not importable from $VENV" >&2
+        exit 1
+    fi
+    echo ">>> load client: $("$VENV/bin/python" -c 'import kafka; print("kafka-python", kafka.__version__)')"
+}
+
+ensure_client_env
 
 run_client() {
     local bootstrap="$1"
