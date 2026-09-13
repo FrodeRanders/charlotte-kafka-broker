@@ -3,7 +3,7 @@
 # The revision is the same one pinned by the root Cargo.toml git dependencies.
 # tools/charlotte-sdk.sh verifies it for a checkout and for an exported SDK.
 OS_REPOSITORY=https://github.com/FrodeRanders/charlotte-os
-OS_REVISION=81d5064a4aa56fe8ec98f3815ffb9acb47603601
-OS_TAG=app-platform-81d5064a
+OS_REVISION=833025bbec5e8deb41734358a9c0947f17645e2f
+OS_TAG=app-platform-833025bb
 TOOLCHAIN=nightly-2026-07-27
 SDK_SCHEMA=1

@@ -18,10 +18,10 @@ broker-core = { path = "crates/broker-core" }
 broker-engine = { path = "crates/broker-engine" }
 broker-runtime = { path = "crates/broker-runtime" }
 broker-wire = { path = "crates/broker-wire" }
-catten-rt = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-81d5064a" }
-catten-services = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-81d5064a" }
-charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-81d5064a" }
-charlotte-launch = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-81d5064a" }
+catten-rt = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-833025bb" }
+catten-services = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-833025bb" }
+charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-833025bb" }
+charlotte-launch = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-833025bb" }
 sitas-charlotte = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
 sitas-core = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
 sitas-unix = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9" }
