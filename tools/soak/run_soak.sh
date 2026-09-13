@@ -8,6 +8,9 @@
 #            at the host forward, deploy it into a single-guest cluster, and
 #            load it until the requested duration elapses.
 #
+# The QEMU guest architecture follows the host by default (x86_64 on Intel,
+# aarch64 on Apple Silicon and ARM), and --arch overrides it.
+#
 # The QEMU guest bounds each partition to a small retained-byte budget, so the
 # client is expected to run for hours without exhausting the 4 MiB EL0 heap.
 # Point --bootstrap at a forwarded address for a foreign cluster.
@@ -25,6 +28,7 @@ CLIENT="$BROKER_ROOT/tools/soak/soak_client.py"
 REQUIREMENTS="$BROKER_ROOT/tools/soak/requirements.txt"
 
 MODE="qemu"
+ARCH="auto"
 DURATION="3600"
 RATE="20"
 MAX_ERRORS="100"
@@ -36,13 +40,14 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --host) MODE="host"; shift ;;
         --qemu) MODE="qemu"; shift ;;
+        --arch) ARCH="$2"; shift 2 ;;
         --duration) DURATION="$2"; shift 2 ;;
         --rate) RATE="$2"; shift 2 ;;
         --max-errors) MAX_ERRORS="$2"; shift 2 ;;
         --bootstrap) BOOTSTRAP="$2"; shift 2 ;;
         --no-build) NO_BUILD="1"; shift ;;
         --keep) KEEP="1"; shift ;;
-        *) echo "usage: $0 [--host|--qemu] [--duration S] [--rate N] [--max-errors N] [--bootstrap HOST:PORT] [--no-build] [--keep]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--host|--qemu] [--arch aarch64|x86_64|auto] [--duration S] [--rate N] [--max-errors N] [--bootstrap HOST:PORT] [--no-build] [--keep]" >&2; exit 2 ;;
     esac
 done
 
@@ -144,8 +149,25 @@ if [ -z "$OS_DIR" ]; then
         exit 1
     fi
 fi
-if [ ! -x "$OS_DIR/scripts/run-aarch64.sh" ]; then
-    echo "error: no QEMU runner at $OS_DIR/scripts/run-aarch64.sh" >&2
+if [ "$ARCH" = "auto" ]; then
+    case "$(uname -m)" in
+        x86_64|amd64) ARCH="x86_64" ;;
+        arm64|aarch64) ARCH="aarch64" ;;
+        *) ARCH="aarch64" ;;
+    esac
+fi
+case "$ARCH" in
+    aarch64|x86_64) ;;
+    *) echo "error: --arch must be aarch64, x86_64, or auto" >&2; exit 2 ;;
+esac
+RUNNER="$OS_DIR/scripts/run-$ARCH.sh"
+if [ ! -x "$RUNNER" ]; then
+    echo "error: no QEMU runner at $RUNNER" >&2
+    exit 1
+fi
+if [ "$ARCH" = "x86_64" ] && ! grep -q "CATTEN_DEPLOY_NAME" "$RUNNER"; then
+    echo "error: $RUNNER does not yet support the external-artifact deployment fixture" >&2
+    echo "       rerun with --arch aarch64 until the x86_64 fixture lands" >&2
     exit 1
 fi
 case "$DURATION" in
@@ -165,14 +187,14 @@ CLIENT_LOG="$BROKER_ROOT/target/soak-client.log"
 RESULT_FILE="$OS_DIR/target/deployment-ingress-test/result"
 
 if [ "$NO_BUILD" != "1" ]; then
-    echo ">>> building broker-el0 with advertised endpoint 127.0.0.1:$APP_HOST_PORT"
+    echo ">>> building broker-el0 for $ARCH with advertised endpoint 127.0.0.1:$APP_HOST_PORT"
     BROKER_ADVERTISE_HOST=127.0.0.1 BROKER_ADVERTISE_PORT="$APP_HOST_PORT" \
-        "$BROKER_ROOT/tools/build-elf.sh"
+        "$BROKER_ROOT/tools/build-elf.sh" --arch "$ARCH"
     "$BROKER_ROOT/tools/package.sh" sign
 fi
 rm -f "$RESULT_FILE"
 
-echo ">>> booting guest; hold=${HOLD}s timeout=${TIMEOUT}s (log: $LOG)"
+echo ">>> booting $ARCH guest; hold=${HOLD}s timeout=${TIMEOUT}s (log: $LOG)"
 CATTEN_DEPLOY_NAME=broker \
 CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
 CATTEN_DEPLOY_OBJECT_KEY=deployments/broker.elf \
@@ -183,7 +205,7 @@ CATTEN_DEPLOY_GRANTS="tcpip=client broker=publish" \
 CATTEN_APP_HOST_PORT="$APP_HOST_PORT" \
 CATTEN_APP_GUEST_PORT=9092 \
 CATTEN_APP_HOLD_SECONDS="$HOLD" \
-"$OS_DIR/scripts/run-aarch64.sh" debug --deployment-ingress-test --timeout "$TIMEOUT" \
+"$RUNNER" debug --deployment-ingress-test --timeout "$TIMEOUT" \
     >"$LOG" 2>&1 &
 RUNNER_PID=$!
 
