@@ -228,14 +228,13 @@ CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 
 The QEMU path builds the image with the client-reachable advertised address,
 deploys it, keeps the guest alive for the requested duration, and verifies that
 every consumed value matches its log offset. `--arch aarch64|x86_64|auto`
-selects the guest and EL0 image architecture and defaults to the host. Until
-the x86_64 runner carries the same signed-deployment fixture, an Intel host must
-pass `--arch aarch64`; the runner refuses the x86_64 choice instead of failing
-later. Each partition is bounded to a small retained-byte budget so the 4 MiB
-EL0 heap survives an overnight run; the client resynchronizes and reports a gap
-if it ever falls behind retention. The runner creates and repairs its own
-Python virtualenv on first use (`CHARLOTTE_SOAK_PYTHON` selects the
-interpreter), so a host only needs `python3`, Docker, and QEMU.
+selects the guest and EL0 image architecture and defaults to the host, so an
+Intel machine exercises the native x86_64 path and Apple Silicon the aarch64
+one. Each partition is bounded to a small retained-byte budget so the 4 MiB EL0
+heap survives an overnight run; the client resynchronizes and reports a gap if
+it ever falls behind retention. The runner creates and repairs its own Python
+virtualenv on first use (`CHARLOTTE_SOAK_PYTHON` selects the interpreter), so a
+host only needs `python3`, Docker, and QEMU.
 
 ## 4. What must change in CharlotteOS
 
@@ -260,7 +259,8 @@ Implemented:
 - `crates/broker-el0`: the `#![no_std]` image. It starts one broker over a
   `CharlotteReactor`, acquires only its granted `tcpip` connection, publishes
   readiness under its artifact name, listens on port 9092, and serves Kafka
-  frames from accepted connections through `broker-engine`;
+  frames from accepted connections through `broker-engine`. It builds for both
+  AArch64 and x86_64;
 - `crates/broker-host/examples/remote_smoke.rs`: the host client that drives
   the deployed image with the pinned `charlotte-kafka` codec;
 - `tools/charlotte-sdk.sh`: platform resolution by checkout, sparse fetch, or

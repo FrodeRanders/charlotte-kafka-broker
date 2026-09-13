@@ -97,6 +97,7 @@ compression, record headers, and dynamic topic creation.
 - [x] Host TCP front end and `charlotte-kafka` conformance tests
 - [x] `broker-el0` builds and signs through the platform tooling
 - [x] EL0 execution under QEMU and deployment through a `CDEPLOY5` descriptor
+      (AArch64 and x86_64 guests)
 - [x] Bounded per-partition retention and an independent kafka-python load client
 - [ ] Client-side connector interop (requires a TLS listener decision)
 - [ ] Segmented, durable partition logs over the block/object-store protocol
