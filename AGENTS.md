@@ -12,7 +12,9 @@ infrastructure frameworks.
 The layers are `broker-wire` (bounded codec), `broker-engine` (dispatch and
 error mapping), `broker-runtime` (Sitas shard services), and `broker-core`
 (partition log and catalog). `broker-host` is the only host-specific crate: it
-provides the TCP front end and the conformance tests.
+provides the TCP front end and the conformance tests. `broker-el0` is the
+`no_std` image built for the CharlotteOS EL0 target; it is excluded from
+default workspace builds and is built with `tools/build-elf.sh`.
 
 Read [docs/architecture.md](docs/architecture.md) before changing protocol,
 sharding, storage, or lifecycle behavior, and
@@ -60,7 +62,8 @@ and updates `docs/architecture.md` at the same time.
 8. Every reply channel is bounded and every wait has a bounded retry budget.
 9. Values that cross a shard boundary are owned; borrowed record data never
    outlives the command that carried it.
-10. The dependencies are pinned by revision. Update the pins deliberately and
+10. The dependencies are pinned by revision. `charlotte.lock` pins the same
+    CharlotteOS revision as the root `Cargo.toml`; update them deliberately and
     in their own change.
 
 ## Coding rules
@@ -83,6 +86,14 @@ cargo fmt --all -- --check
 cargo test
 cargo clippy --all-targets -- -D warnings
 cargo doc --no-deps
+```
+
+The EL0 image is validated with the platform tools, not by host cargo:
+
+```bash
+tools/charlotte-sdk.sh use-os <charlotte-os-dir>   # or fetch / unpack
+tools/build-elf.sh
+tools/package.sh sign
 ```
 
 When touching `broker-core`, cover append/fetch boundaries, offset exhaustion,

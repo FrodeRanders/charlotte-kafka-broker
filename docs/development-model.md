@@ -51,16 +51,18 @@ Hard rules:
 |---|---|---|
 | CharlotteOS crates (`catten-rt`, `charlotte-launch`, protocols, `charlotte-kafka`) | OS repository | `rev` in the root `Cargo.toml` |
 | Sitas runtime | Sitas repository | `rev` in the root `Cargo.toml` |
-| Toolchain | OS repository | `rust-toolchain.toml` |
+| Platform tooling (builder, SDK export, signer) | OS repository | `charlotte.lock` |
+| Toolchain | OS repository | `rust-toolchain.toml` and `charlotte.lock` |
 | Machine image layout | `crates/catten-services/aarch64-unknown-none.json` and `link.x` | OS checkout revision |
 | ELF signing note | CLS2, `charlotte-launch/src/signature_note.rs` | OS checkout revision |
 | Deployment descriptor | `CDEPLOY5`/`CRELEASE`, `charlotte-launch/src/deployment.rs` | OS checkout revision |
 | Runtime authority | Launch page v2, typed manifest, capability vector, `grantctl` | OS checkout revision |
 | Wire versions | `charlotte-kafka` version table | OS checkout revision |
 
-The pinned OS revision is the one referenced by the root `Cargo.toml` git
-dependency. The EL0 build (M2) verifies that the `CHARLOTTE_OS_DIR` checkout is
-at that revision before using its target spec and signing tool.
+The pinned OS revision appears in the root `Cargo.toml` git dependencies and in
+`charlotte.lock`. `tools/charlotte-sdk.sh` verifies a checkout or an exported
+SDK against the lock before use, so the crate pin and the platform tooling
+cannot silently diverge.
 
 Authoritative OS references: `docs/guides/userspace-development.md`,
 `docs/reference/deployment-ingress.md`,
@@ -69,6 +71,26 @@ Authoritative OS references: `docs/guides/userspace-development.md`,
 repository.
 
 ## 3. Stages
+
+### 3.0 Resolve the platform tooling
+
+Two equivalent sources provide the platform build and signing tools:
+
+- a pinned CharlotteOS checkout (development):
+  `tools/charlotte-sdk.sh use-os ../charlotte-os` verifies the revision in
+  `charlotte.lock` and uses its `scripts/build-external-elf.sh` and
+  `tools/cluster-sign`;
+- an exported SDK tarball (new projects, CI): CharlotteOS produces one with
+  `scripts/export-app-sdk.sh`; `tools/charlotte-sdk.sh unpack <tarball>` checks
+  its SHA-256, unpacks it under `.charlotte/sdk`, and uses its build wrapper,
+  platform definitions, vendored `cluster-sign` workspace, and development
+  keys. `tools/charlotte-sdk.sh fetch` sparse-clones the pinned revision when
+  neither of the above exists.
+
+`tools/charlotte-sdk.sh build-signer` builds `cluster-sign` with the pinned
+toolchain and records its path in `.charlotte/platform.env`. Everything under
+`.charlotte/` is generated and git-ignored, and a CharlotteOS checkout is never
+written.
 
 ### 3.1 Develop (host lane, no OS checkout)
 
@@ -88,47 +110,51 @@ witness.
 The host front end (`broker-host`) is development infrastructure. It is never
 packaged, signed, or deployed to CharlotteOS; only the EL0 artifact is.
 
-### 3.2 Compile (EL0 lane, read-only OS checkout)
+### 3.2 Compile (EL0 lane, resolved platform)
 
-The application supplies `crates/broker-el0` (M2). CharlotteOS supplies the
-platform definition: target specification, linker script, toolchain, and the
-`-Z build-std=core,alloc` invocation pattern. `tools/build-elf.sh` (M2) will:
+`tools/build-elf.sh` calls the platform builder
+(`scripts/build-external-elf.sh` from a checkout, or the SDK copy) with the
+application manifest and output path. The platform builder:
 
-1. require `CHARLOTTE_OS_DIR` and verify its revision against the pin;
-2. generate a build-local target spec whose pre-link argument points at the OS
-   `link.x` (the shipped spec references it by relative path, so it cannot be
-   used unmodified from another working directory);
-3. build the EL0 binary, strip it with `llvm-objcopy`, and reject writable
-   executable or page-overlapping LOAD segments;
+1. generates a build-local target specification whose pre-link argument points
+   at the platform `link.x` (the shipped spec references it by relative path,
+   so it cannot be used unmodified from another working directory);
+2. runs the pinned toolchain with `-Z json-target-spec` and
+   `-Z build-std=core,alloc,compiler_builtins`, and sets the platform build
+   environment;
+3. strips the result with `llvm-objcopy` and rejects writable executable or
+   page-overlapping LOAD segments.
 
-Output: `target/elf/broker.elf`, an unsigned ELF with a verified machine
-layout.
+Output: `target/elf/broker.elf`. The EL0 crate is excluded from default
+workspace builds because it is `no_std`; the host test loop never requires an
+OS checkout.
 
 ### 3.3 Package and sign (OS tool, application parameters)
 
-This repository owns the artifact identity and policy; CharlotteOS owns the
-signing format and key map. Sign with the pinned `cluster-sign`:
+`tools/package.sh sign` signs the EL0 image with the resolved `cluster-sign`
+and prints the artifact name, SHA-256, and the deployment handoff:
 
 ```sh
-CHARLOTTE_OS_DIR=/path/to/charlotte-os
-CLUSTER_SIGN="$CHARLOTTE_OS_DIR/target/debug/cluster-sign"
+tools/package.sh sign
+```
 
-# Build the OS tool without inheriting this repository's working directory;
-# the OS root build configuration pins its own platform build-std setup.
-(cd /tmp && cargo build --quiet \
-  --manifest-path "$CHARLOTTE_OS_DIR/tools/cluster-sign/Cargo.toml")
+The artifact identity (`broker`, class `service`, version 1, rollback 1,
+flags 0) is application policy. The development key is used unless
+`CHARLOTTE_SIGN_KEY_HEX` names another key; production uses the offline cluster
+key and is an operator action. The OS-side `artifact-policy.tsv` is an in-tree
+build convenience and is not used by out-of-tree artifacts.
 
-KEY_HEX="$(grep -v '^#' "$CHARLOTTE_OS_DIR/tools/cluster-sign/dev-key.hex" | tr -d '[:space:]')"
+The equivalent manual invocation is:
 
+```sh
+CLUSTER_SIGN="$CHARLOTTE_CLUSTER_SIGN"   # from tools/charlotte-sdk.sh env
+KEY_HEX="$(grep -v '^#' "$CHARLOTTE_KEYS_DIR/dev-key.hex" | tr -d '[:space:]')"
 "$CLUSTER_SIGN" elf-sign target/elf/broker.elf broker "$KEY_HEX" service 1 1 0 -
 DIGEST="$("$CLUSTER_SIGN" sha256 target/elf/broker.elf)"
 ```
 
 `elf-sign` arguments are name, private key, class, version, rollback counter,
-flags, and provenance digest. The development key is the publicly known test
-key; production uses the offline cluster key and is an operator action. The
-OS-side `artifact-policy.tsv` is an in-tree build convenience and is not used
-by out-of-tree artifacts.
+flags, and provenance digest.
 
 ### 3.4 Upload (operator or CI)
 
@@ -167,6 +193,12 @@ change, use `release-sign` and `release-apply` instead; admission is atomic
 while rollout policy remains future work. `deployd` listens on guest TCP 7444
 and the QEMU runners forward host port 8081 by default.
 
+The EL0 broker needs at least three threads: the bootstrap thread plus one per
+partition shard. The descriptor's `max_threads` must cover them and
+`stack_pages_per_thread` applies to each. Its grant list is `tcpip=client` and
+`broker=publish`; the publish grant name must equal the descriptor artifact
+name for the node agent to observe readiness.
+
 A deployed application receives only a bootstrap call to `grantctl` plus a
 read-only descriptor capability; the launch manifest is empty. It acquires its
 named grants and publishes its endpoint through `grant_client` under the
@@ -196,16 +228,25 @@ The node `agent` already handles full artifact names, S3 fetch, digest and CLS2
 verification, placement, and scoped launch; the port to a generic broker is an
 application-side exercise, not an OS change.
 
-## 5. Working example at M2
+## 5. Working example
 
-The first EL0 milestone adds:
+Implemented:
 
-- `crates/broker-el0`: the `#![no_std]` binary using `catten-rt` and
-  `sitas-charlotte`, holding no authority beyond its bootstrap grant;
-- `tools/build-elf.sh`: the compile stage above;
-- `deploy/broker.cdep` inputs and a packaging script that runs stages 3.3 and
-  3.5 through `CHARLOTTE_OS_DIR`;
-- conformance and readiness checks driven from the host against a QEMU cluster.
+- `crates/broker-el0`: the `#![no_std]` image. It starts one broker over a
+  `CharlotteReactor`, acquires only its granted `tcpip` connection, publishes
+  readiness under its artifact name, listens on port 9092, and serves Kafka
+  frames from accepted connections through `broker-engine`;
+- `tools/charlotte-sdk.sh`: platform resolution by checkout, sparse fetch, or
+  SDK tarball, plus `cluster-sign` build;
+- `tools/build-elf.sh` and `tools/package.sh`: the compile and sign stages;
+- CharlotteOS `scripts/build-external-elf.sh` and `scripts/export-app-sdk.sh`:
+  the platform builder and the SDK packaging.
 
-Everything before that is host-testable and requires no OS checkout, which is
-the point of the boundary.
+Still open:
+
+- EL0 execution under QEMU with a `CDEPLOY5` descriptor;
+- connector interop through the deployment ingress and readiness observation;
+- segmented durable logs and replicated partitions.
+
+The host development loop requires no OS checkout, which is the point of the
+boundary.

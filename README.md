@@ -78,6 +78,14 @@ compression, record headers, and dynamic topic creation.
 | `crates/broker-engine` | Transport-free request dispatch and Kafka error mapping |
 | `crates/broker-runtime` | Sitas shard services and the user-facing `Broker` API |
 | `crates/broker-host` | Host TCP front end and `charlotte-kafka` conformance tests |
+| `crates/broker-el0` | CharlotteOS EL0 image: reactor, grants, TCP listener, engine dispatch |
+
+| Tooling | Purpose |
+|---|---|
+| `charlotte.lock` | Pinned CharlotteOS repository, revision, and toolchain |
+| `tools/charlotte-sdk.sh` | Resolve a checkout or unpacked SDK, build `cluster-sign` |
+| `tools/build-elf.sh` | Build `broker-el0` through the platform builder |
+| `tools/package.sh` | Sign the artifact and print the deployment handoff |
 
 ## Status
 
@@ -87,7 +95,8 @@ compression, record headers, and dynamic topic creation.
 - [x] `broker-wire`: restricted request decode and response encode
 - [x] `broker-engine`: dispatch and per-partition error mapping
 - [x] Host TCP front end and `charlotte-kafka` conformance tests
-- [ ] EL0 service on CharlotteOS with a `tcpip` socket capability
+- [x] `broker-el0` builds and signs through the platform tooling
+- [ ] EL0 execution under QEMU and deployment through a `CDEPLOY5` descriptor
 - [ ] Segmented, durable partition logs over the block/object-store protocol
 - [ ] Partition placement and Raft-replicated logs across cluster members
 
@@ -99,6 +108,15 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 cargo doc --no-deps
 cargo run --example host_broker   # TCP broker on 127.0.0.1:9092
+```
+
+`broker-el0` is excluded from default workspace builds because it targets
+`no_std` EL0. Build and sign it through the resolved platform:
+
+```sh
+tools/charlotte-sdk.sh use-os ../charlotte-os   # or: fetch / unpack <sdk.tar.gz>
+tools/build-elf.sh
+tools/package.sh sign
 ```
 
 The conformance tests in `crates/broker-host/tests/charlotte_conformance.rs`

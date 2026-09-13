@@ -1,0 +1,20 @@
+[package]
+name = "broker-el0"
+version.workspace = true
+edition.workspace = true
+description = "CharlotteOS EL0 Kafka-subset broker image"
+
+[[bin]]
+name = "broker-el0"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+broker-core.workspace = true
+broker-engine.workspace = true
+broker-runtime.workspace = true
+catten-rt.workspace = true
+catten-services.workspace = true
+charlotte-launch.workspace = true
+sitas-charlotte.workspace = true

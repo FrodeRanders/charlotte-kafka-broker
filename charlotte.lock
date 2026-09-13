@@ -1,0 +1,8 @@
+# Pinned CharlotteOS platform inputs for the out-of-tree build.
+#
+# The revision is the same one pinned by the root Cargo.toml git dependencies.
+# tools/charlotte-sdk.sh verifies it for a checkout and for an exported SDK.
+OS_REPOSITORY=https://github.com/FrodeRanders/charlotte-os
+OS_REVISION=226d1cd5cc79356d32b3d2661dd255ccdf688cd1
+TOOLCHAIN=nightly-2026-07-27
+SDK_SCHEMA=1

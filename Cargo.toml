@@ -1,5 +1,12 @@
 [workspace]
 members = ["crates/*"]
+default-members = [
+    "crates/broker-core",
+    "crates/broker-engine",
+    "crates/broker-host",
+    "crates/broker-runtime",
+    "crates/broker-wire",
+]
 resolver = "3"
 
 [workspace.package]
@@ -11,6 +18,10 @@ broker-core = { path = "crates/broker-core" }
 broker-engine = { path = "crates/broker-engine" }
 broker-runtime = { path = "crates/broker-runtime" }
 broker-wire = { path = "crates/broker-wire" }
-charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "d639ea3810c0740c192cfdb6976954ff9e734c38" }
+catten-rt = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "226d1cd5cc79356d32b3d2661dd255ccdf688cd1" }
+catten-services = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "226d1cd5cc79356d32b3d2661dd255ccdf688cd1" }
+charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "226d1cd5cc79356d32b3d2661dd255ccdf688cd1" }
+charlotte-launch = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "226d1cd5cc79356d32b3d2661dd255ccdf688cd1" }
+sitas-charlotte = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
 sitas-core = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
 sitas-unix = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9" }
