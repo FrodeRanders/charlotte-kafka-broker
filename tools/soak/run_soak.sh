@@ -54,20 +54,43 @@ ensure_client_env() {
         echo "error: $python not found; set CHARLOTTE_SOAK_PYTHON to a Python 3 interpreter" >&2
         exit 1
     fi
-    if [ ! -x "$VENV/bin/python" ]; then
+
+    # Treat a directory without a marker file or a working interpreter as a
+    # partial environment left by an interrupted create or install.
+    local recreate=0
+    if [ ! -f "$VENV/pyvenv.cfg" ] || [ ! -x "$VENV/bin/python" ]; then
+        recreate=1
+    elif ! "$VENV/bin/python" -c "import sys" >/dev/null 2>&1; then
+        recreate=1
+    fi
+    if [ "$recreate" = "1" ]; then
+        rm -rf "$VENV"
         echo ">>> creating Python load-client environment with $python"
         if ! "$python" -m venv "$VENV"; then
             echo "error: creating a virtualenv failed" >&2
             echo "       Debian/Ubuntu: apt install python3-venv" >&2
+            echo "       or set CHARLOTTE_SOAK_PYTHON to another Python 3" >&2
             exit 1
         fi
     fi
+
+    if ! "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
+        echo ">>> bootstrapping pip in $VENV"
+        if ! "$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 \
+            && ! "$VENV/bin/python" -m ensurepip --upgrade --default-pip >/dev/null 2>&1; then
+            echo "error: pip is unavailable in $VENV and ensurepip failed" >&2
+            echo "       Debian/Ubuntu: apt install python3-venv" >&2
+            echo "       or set CHARLOTTE_SOAK_PYTHON to another Python 3" >&2
+            exit 1
+        fi
+    fi
+
     # A venv can exist while the dependency install failed or was interrupted;
     # verify the import and repair instead of trusting the interpreter.
     if ! "$VENV/bin/python" -c "import kafka" >/dev/null 2>&1; then
         echo ">>> installing Python load-client dependencies"
-        "$VENV/bin/pip" install --quiet --upgrade pip >/dev/null 2>&1 || true
-        if ! "$VENV/bin/pip" install --quiet -r "$REQUIREMENTS"; then
+        "$VENV/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+        if ! "$VENV/bin/python" -m pip install --quiet -r "$REQUIREMENTS"; then
             echo "error: installing $REQUIREMENTS failed; check network access" >&2
             exit 1
         fi
