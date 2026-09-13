@@ -25,6 +25,11 @@ serves fetches, and reports metadata. That is enough to demonstrate a real
 distributed system on top of the kernel, and it is the substrate a later
 database can reuse.
 
+It is also a worked example of out-of-tree CharlotteOS development. The
+boundary between this repository and the operating system, and the method used
+to develop, compile, package, sign, and deploy against it, are specified in
+[docs/development-model.md](docs/development-model.md).
+
 ## Layers
 
 ```text
@@ -106,15 +111,25 @@ The workspace pins the same nightly toolchain as CharlotteOS
 `Cargo.toml`. `broker-host` is the only crate that knows about a host
 operating system; the other crates are fit for the CharlotteOS EL0 target.
 
-## Integration with CharlotteOS
+## Developing against CharlotteOS
 
-The EL0 binary will follow the `catten-user` pattern: its own target JSON and
-linker script, `-Z build-std=core,alloc`, a signed ELF note, and a staged entry
-in `target/embedded-services/aarch64-unknown-none/`. The kernel installs and
-loads services by logical name from the object store, so the first EL0
-integration requires one gated entry in `BOOTSTRAP_ELFS` (or the signed
-deployment path). Runtime authority is expected to be a `tcpip` socket
-capability plus a storage capability, not ambient device access.
+This repository consumes the platform and ends at a signed artifact plus
+descriptor inputs; placement, admission, launch, and lifecycle belong to
+CharlotteOS tooling. The full ownership matrix, pinned contracts, and
+stage-by-stage commands are in
+[docs/development-model.md](docs/development-model.md).
+
+| Stage | Owner | Output |
+|---|---|---|
+| Develop | This repository | Host-tested portable crates and `charlotte-kafka` conformance |
+| Compile | This repository, read-only OS platform spec | `target/elf/broker.elf` (M2) |
+| Package and sign | This repository's parameters, OS `cluster-sign` | CLS2-signed ELF and its SHA-256 |
+| Upload | Operator or CI | Immutable bytes in the central store |
+| Deploy | OS `deployd`/`agent` via signed `CDEPLOY5` | Placed, launched, generation-fenced instance |
+
+Two rules follow from this boundary. This repository never edits a CharlotteOS
+checkout or stages files into its bundle, and every platform gap is fixed in
+the OS repository and adopted here by bumping the pinned revision.
 
 The Kafka connector's current profile requires verified TLS. Since
 `embedded-tls` provides no server side, the first host milestones use a

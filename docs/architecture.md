@@ -181,15 +181,21 @@ partition and stores `NO_ERROR` data locally.
 
 ## 8. CharlotteOS integration
 
-- The EL0 binary follows the `catten-user` build pattern and is signed with the
-  cluster signing tool. The dispatch logic is `broker-engine`, so only the
-  socket loop differs from the host front end.
-- Service ELFs are installed by logical name from the object store; the first
-  integration adds one gated `BOOTSTRAP_ELFS` entry or uses the signed
-  deployment path.
-- Runtime authority is expected to be a `tcpip` socket capability (listener)
-  and a storage capability. No MMIO, interrupt, or DMA authority belongs to the
-  broker.
+This repository is an out-of-tree application. It produces a signed ELF and
+the inputs for a signed deployment descriptor, then hands them to CharlotteOS
+deployment tooling; it never edits or stages files into the OS tree. The full
+boundary, ownership matrix, and stage commands are in
+[development-model.md](development-model.md).
+
+- The dispatch logic is `broker-engine`, so only the socket loop differs
+  between the host front end and the EL0 service.
+- A deployed instance receives only a bootstrap call to `grantctl` plus a
+  read-only descriptor capability. It acquires its named grants and publishes
+  its endpoint through `grant_client`; it receives no ambient name or
+  transport authority.
+- The expected grants for the EL0 broker are a `tcpip` socket capability and a
+  storage capability. No MMIO, interrupt, or DMA authority belongs to the
+  broker. Exact grant names and rights are fixed with the EL0 service.
 - TLS is an open question: the CharlotteOS connector requires verified TLS and
   `embedded-tls` is client-only. The host milestones use plaintext with an
   external test client; the in-guest connector path needs either a server TLS
@@ -217,8 +223,9 @@ the same conformance expectations.
 - **M1 - host broker (done):** transport-free dispatch engine, plain TCP front
   end, and conformance against `charlotte-kafka` request builders and response
   parsers.
-- **M2 - EL0:** `broker.elf` with a `tcpip` socket capability, signed and
-  staged, exercised by the in-guest connector.
+- **M2 - EL0 and deployment:** `broker.elf` built through the out-of-tree
+  packaging flow, deployed with a signed `CDEPLOY5` descriptor, and exercised
+  by the in-guest connector.
 - **M3 - durable logs:** segmented storage with crash-recovery checks.
 - **M4 - replicated partitions:** followers, high watermark replication, and
   leader failover against the existing distributed fixtures.

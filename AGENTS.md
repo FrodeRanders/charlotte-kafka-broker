@@ -15,7 +15,31 @@ error mapping), `broker-runtime` (Sitas shard services), and `broker-core`
 provides the TCP front end and the conformance tests.
 
 Read [docs/architecture.md](docs/architecture.md) before changing protocol,
-sharding, storage, or lifecycle behavior.
+sharding, storage, or lifecycle behavior, and
+[docs/development-model.md](docs/development-model.md) before changing how the
+application is built, signed, packaged, or deployed.
+
+## Repository boundary
+
+This repository consumes CharlotteOS; it does not develop it. The two
+repositories meet at versioned crates, the launch/descriptor ABI, and the
+deployment handoff. Preserve that separation:
+
+1. Never edit a CharlotteOS checkout from this repository. Paths under
+   `CHARLOTTE_OS_DIR` are read-only inputs. OS gaps are fixed in the OS
+   repository and adopted here by bumping the pinned revision.
+2. Never stage artifacts into a CharlotteOS service bundle or rely on
+   `BOOTSTRAP_ELFS`. Bootstrap embedding is an OS bring-up mechanism; this
+   application deploys through a signed `CDEPLOY5` descriptor.
+3. The host development loop must work without a CharlotteOS checkout. Only
+   cargo and the pinned crate revisions may be required for `cargo test`.
+4. The product of this repository is a signed ELF plus descriptor inputs
+   (placement, limits, grants). The operator or CI uploads the immutable
+   bytes; CharlotteOS admits, places, and launches them.
+5. Never commit private keys, deployment material, or built ELFs.
+6. Update [docs/development-model.md](docs/development-model.md) in the same
+   change as any new platform dependency, tooling invocation, or boundary
+   rule.
 
 ## Architectural invariants
 
@@ -76,8 +100,15 @@ Update `docs/architecture.md` when a change affects:
 - shard ownership or placement rules;
 - record and offset semantics;
 - the storage layout or recovery behavior;
-- the CharlotteOS integration boundary (bundle, signing, capabilities);
 - non-goals or milestone status.
+
+Update `docs/development-model.md` when a change affects:
+
+- the app/platform ownership boundary;
+- pinned revisions, toolchain, or the platform contract;
+- any develop, compile, package, sign, upload, or deploy step;
+- an OS-side gap or the way the application works around it;
+- the artifact identity, resource limits, or grant list.
 
 ## Non-goals
 
