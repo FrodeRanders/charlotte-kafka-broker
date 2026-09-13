@@ -1106,7 +1106,7 @@ dependencies = [
 [[package]]
 name = "sitas-charlotte"
 version = "0.2.0"
-source = "git+https://github.com/FrodeRanders/sitas?rev=94eca68554e88f06721df4ccf3a69222a963c2c9#94eca68554e88f06721df4ccf3a69222a963c2c9"
+source = "git+https://github.com/FrodeRanders/sitas?tag=charlotte-x86-64-2c0f800#2c0f8009b02b0976886c9a01f766d695ee0c59fd"
 dependencies = [
  "sitas-core",
  "spin 0.9.9",
@@ -1115,7 +1115,7 @@ dependencies = [
 [[package]]
 name = "sitas-core"
 version = "0.2.0"
-source = "git+https://github.com/FrodeRanders/sitas?rev=94eca68554e88f06721df4ccf3a69222a963c2c9#94eca68554e88f06721df4ccf3a69222a963c2c9"
+source = "git+https://github.com/FrodeRanders/sitas?tag=charlotte-x86-64-2c0f800#2c0f8009b02b0976886c9a01f766d695ee0c59fd"
 dependencies = [
  "spin 0.9.9",
 ]
@@ -1123,7 +1123,7 @@ dependencies = [
 [[package]]
 name = "sitas-unix"
 version = "0.2.0"
-source = "git+https://github.com/FrodeRanders/sitas?rev=94eca68554e88f06721df4ccf3a69222a963c2c9#94eca68554e88f06721df4ccf3a69222a963c2c9"
+source = "git+https://github.com/FrodeRanders/sitas?tag=charlotte-x86-64-2c0f800#2c0f8009b02b0976886c9a01f766d695ee0c59fd"
 dependencies = [
  "sitas-core",
 ]

@@ -50,7 +50,7 @@ Hard rules:
 | Contract element | Source | Pinned by |
 |---|---|---|
 | CharlotteOS crates (`catten-rt`, `charlotte-launch`, protocols, `charlotte-kafka`) | OS repository | immutable platform tag in the root `Cargo.toml` |
-| Sitas runtime | Sitas repository | `rev` in the root `Cargo.toml` |
+| Sitas runtime | Sitas repository | repository tag in the root `Cargo.toml` |
 | Platform tooling (builder, SDK export, signer) | OS repository | `charlotte.lock` |
 | Toolchain | OS repository | `rust-toolchain.toml` and `charlotte.lock` |
 | Machine image layout | `crates/catten-services/aarch64-unknown-none.json` and `link.x` | OS checkout revision |

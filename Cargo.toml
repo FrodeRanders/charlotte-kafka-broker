@@ -22,6 +22,15 @@ catten-rt = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-p
 catten-services = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-833025bb" }
 charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-833025bb" }
 charlotte-launch = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-833025bb" }
-sitas-charlotte = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
-sitas-core = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
-sitas-unix = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9" }
+sitas-charlotte = { git = "https://github.com/FrodeRanders/sitas", tag = "charlotte-x86-64-2c0f800", default-features = false }
+sitas-core = { git = "https://github.com/FrodeRanders/sitas", tag = "charlotte-x86-64-2c0f800", default-features = false }
+sitas-unix = { git = "https://github.com/FrodeRanders/sitas", tag = "charlotte-x86-64-2c0f800" }
+
+
+# Match the CharlotteOS workspace code generation for EL0 service images.
+[profile.release]
+debug = "none"
+debug-assertions = false
+panic = "abort"
+lto = true
+opt-level = 3
