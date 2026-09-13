@@ -81,7 +81,10 @@ Two equivalent sources provide the platform build and signing tools:
 - a pinned CharlotteOS checkout (development):
   `tools/charlotte-sdk.sh use-os ../charlotte-os` verifies the revision in
   `charlotte.lock` and uses its `scripts/build-external-elf.sh` and
-  `tools/cluster-sign`;
+  `tools/cluster-sign`. When the local checkout has moved past the pinned
+  revision, `tools/charlotte-sdk.sh worktree ../charlotte-os` creates a
+  detached worktree at the immutable platform tag from that checkout, leaving
+  `main` untouched, and resolves the worktree instead;
 - an exported SDK tarball (new projects, CI): CharlotteOS produces one with
   `scripts/export-app-sdk.sh`; `tools/charlotte-sdk.sh unpack <tarball>` checks
   its SHA-256, unpacks it under `.charlotte/sdk`, and uses its build wrapper,

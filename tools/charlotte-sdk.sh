@@ -10,6 +10,7 @@
 # Commands:
 #   fetch                    Sparse-clone the pinned revision and use it.
 #   use-os DIR [--force]     Use an existing CharlotteOS checkout.
+#   worktree SOURCE [DIR]    Detach a worktree at the pinned tag and use it.
 #   unpack TARBALL           Unpack an exported application SDK tarball.
 #   build-signer             Build cluster-sign from the resolved signer tree.
 #   env                      Print shell exports for the resolved platform.
@@ -88,6 +89,30 @@ cmd_use_os() {
     write_env os "$dir" "$dir/scripts/build-external-elf.sh" \
         "$dir/tools/cluster-sign/Cargo.toml" "$dir/target" "$dir/tools/cluster-sign"
     echo ">>> platform: CharlotteOS checkout at $dir"
+}
+
+cmd_worktree() {
+    local source="${1:-}"
+    local tag="${OS_TAG:-app-platform-${OS_REVISION:0:8}}"
+    local worktree="${2:-$STATE/worktree-$tag}"
+    if [ -z "$source" ]; then
+        echo "usage: $0 worktree <charlotte-os-dir> [worktree-dir]" >&2
+        exit 2
+    fi
+    source="$(cd "$source" && pwd)"
+    if ! git -C "$source" rev-parse --git-dir >/dev/null 2>&1; then
+        echo "error: $source is not a git checkout" >&2
+        exit 1
+    fi
+    if [ -e "$worktree" ]; then
+        echo "error: $worktree already exists; remove it or pass another path" >&2
+        exit 1
+    fi
+    echo ">>> fetching tag $tag into $source"
+    git -C "$source" fetch origin "refs/tags/$tag:refs/tags/$tag"
+    echo ">>> creating worktree $worktree at $tag"
+    git -C "$source" worktree add --detach "$worktree" "$tag"
+    cmd_use_os "$worktree"
 }
 
 cmd_unpack() {
@@ -215,12 +240,13 @@ shift || true
 case "$command" in
     fetch) cmd_fetch "$@" ;;
     use-os) cmd_use_os "$@" ;;
+    worktree) cmd_worktree "$@" ;;
     unpack) cmd_unpack "$@" ;;
     build-signer) cmd_build_signer "$@" ;;
     env) cmd_env "$@" ;;
     status) cmd_status "$@" ;;
     *)
-        echo "usage: $0 fetch | use-os DIR [--force] | unpack TARBALL | build-signer | env | status" >&2
+        echo "usage: $0 fetch | use-os DIR [--force] | worktree SOURCE [DIR] | unpack TARBALL | build-signer | env | status" >&2
         exit 2
         ;;
 esac
