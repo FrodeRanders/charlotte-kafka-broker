@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+broker-core = { path = "crates/broker-core" }
+broker-runtime = { path = "crates/broker-runtime" }
+broker-wire = { path = "crates/broker-wire" }
+sitas-core = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9", default-features = false }
+sitas-unix = { git = "https://github.com/FrodeRanders/sitas", rev = "94eca68554e88f06721df4ccf3a69222a963c2c9" }

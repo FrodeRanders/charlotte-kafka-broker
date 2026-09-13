@@ -1,0 +1,9 @@
+[package]
+name = "broker-core"
+version.workspace = true
+edition.workspace = true
+description = "Transport-free partition log and topic catalog for the CharlotteOS Kafka broker"
+
+[lib]
+test = true
+bench = false

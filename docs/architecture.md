@@ -1,0 +1,191 @@
+# Architecture
+
+## 1. Context
+
+CharlotteOS already speaks Kafka as a client: `charlotte-kafka` implements the
+bounded request versions, `kafka.elf` owns broker connections, credentials, and
+producer/consumer state behind capability endpoints, and `kafka_step.elf`
+provides a transactional runner. What is missing is a broker that runs *inside*
+the operating system, on its own block and network services, so the cluster can
+be the log substrate rather than merely a client of one.
+
+This repository is that broker. It is intentionally a subset: a durable,
+partitioned, replicated append log with Kafka wire compatibility for the paths
+the CharlotteOS connector already uses.
+
+## 2. Layer boundaries
+
+```text
+        Kafka clients
+             |
+   +---------v----------+
+   |     broker-wire    |  bounded decode/encode for the supported subset
+   +---------+----------+
+             |
+   +---------v----------+
+   |   broker-runtime   |  Sitas shards, routing, replies, lifecycle
+   +---------+----------+
+             |
+   +---------v----------+
+   |    broker-core     |  partition log + topic catalog (pure state)
+   +---------+----------+
+             |
+   storage and transport capabilities supplied by CharlotteOS
+```
+
+- `broker-core` never performs I/O and never observes time. It is deterministic
+  and unit-testable without a runtime.
+- `broker-runtime` owns threads and channels through the `sitas-core`
+  `ShardRuntime` seam. It does not know how a request arrived or where records
+  will be stored.
+- `broker-wire` maps bytes to the typed operations of `broker-core` and back.
+  It does not own shards or state.
+
+## 3. Execution model
+
+One partition log is owned by exactly one shard. A shard is one OS thread with
+one `ShardExecutor` and one reactor on CharlotteOS. A shard may own several
+partitions; no partition is shared between shards.
+
+```text
+caller shard                     partition shard
+     |                                  |
+     |  PartitionCommand::Produce       |
+     |  { ..., reply: ShardSender }     |
+     +--------------------------------->|
+     |                            validate against catalog
+     |                            append to owned PartitionLog
+     |  PartitionResult::Produced       |
+     |<---------------------------------+
+     |        + parker.unpark()         |
+```
+
+Rules:
+
+- commands and replies are owned values over bounded, typed
+  `sitas-core` channels;
+- a caller whose mailbox is full parks with a short timeout and retries
+  instead of spinning;
+- a shard sends the reply and then unparks the waiting caller; the caller still
+  re-checks on every wake because wakes may be coalesced or spurious;
+- every wait has a bounded retry budget so a dead shard produces an error
+  instead of a hang;
+- shutdown is an explicit `Shutdown` command with an acknowledgement, not a
+  dropped channel;
+- the Sitas ring channels reserve one slot to distinguish full from empty, so
+  a channel sized for `n` messages is created with `n + 1` slots.
+
+Placement is deterministic: `shard = hash(topic) + partition (mod shard_count)`.
+It is a pure function of the topic name and partition index, so every caller
+routes to the owner without shared routing state.
+
+## 4. Partition log semantics
+
+A `PartitionLog` is an ordered sequence of batches. Each batch is appended
+atomically and receives a contiguous range starting at the current high
+watermark.
+
+- append: assigns monotonically increasing offsets and returns the base offset;
+- fetch: returns records from the requested offset, bounded by record count and
+  approximate byte count, plus the current high watermark;
+- list offsets: earliest is the log start offset, latest is the high watermark;
+- out-of-range reads are an error, not an empty result;
+- readers of records always receive owned copies; no reference into shard state
+  escapes.
+
+Transactions, compaction, retention, and timestamp indexes are out of scope for
+the first milestones. Fetch `isolation_level` is accepted and treated as
+read-uncommitted because no aborted-transaction state exists yet.
+
+## 5. Wire subset
+
+The framing is the Kafka legacy request header version 1 (big-endian, length
+prefixed) and the response header followed by the correlation id. Flexible
+(tagged) versions are not used by this subset.
+
+| API | Key | Version | Implemented |
+|---|---|---|---|
+| ApiVersions | 18 | 0 | advertises the table below |
+| Metadata | 3 | 1 | `brokers`, `controller_id`, per-topic partitions |
+| Produce | 0 | 3 | record batch v2, one topic/partition per entry |
+| Fetch | 1 | 4 | high watermark, last stable offset, record batch v2 |
+| ListOffsets | 2 | 1 | earliest (-2) and latest (-1) |
+
+The advertised ApiVersions response deliberately omits APIs that are not
+implemented, so a client that requires groups, transactions, or SASL fails at
+negotiation instead of receiving a guessed schema.
+
+Record batches use magic 2 and CRC32C. Produce requests may carry several record
+batches in one partition entry; each decoded batch is appended as one atomic
+unit. Fetch responses re-encode stored records into a batch whose base offset is
+the first returned record, preserving Kafka offset semantics.
+
+## 6. Storage direction
+
+The first implementation keeps logs in memory so protocol and shard semantics
+can be tested deterministically. The durable step keeps the same `PartitionLog`
+interface and stores batches in segments on a storage capability:
+
+- segment files are created in order and sealed at a bounded size;
+- the high watermark is recoverable by scanning the last segment;
+- flush and FUA behavior follow the object-store or block protocol contract;
+- recovery validates CRCs before resuming appends;
+- the broker receives only the storage capability named by its deployment
+  descriptor, never a raw device.
+
+`broker-core` is written so the storage backend stays on the runtime side of
+the boundary; the log owns ordering and offsets, not file layout.
+
+## 7. Distribution direction
+
+The CharlotteOS cluster already provides discovery, a replicated name service,
+Raft (`catten-graft`), and signed placement. The intended progression is:
+
+1. a partition is hosted by one shard on one node;
+2. a replica set is described by a signed deployment descriptor;
+3. followers fetch from the leader and acknowledge the high watermark;
+4. leader election uses the existing Raft service or a per-partition
+   Leader/Follower state machine, and clients are redirected by `NOT_LEADER`
+   metadata error codes;
+5. producers observe `acks=-1` only after the replica quorum acknowledges.
+
+Until replication exists, the broker reports itself as the leader of every
+partition and stores `NO_ERROR` data locally.
+
+## 8. CharlotteOS integration
+
+- The EL0 binary follows the `catten-user` build pattern and is signed with the
+  cluster signing tool.
+- Service ELFs are installed by logical name from the object store; the first
+  integration adds one gated `BOOTSTRAP_ELFS` entry or uses the signed
+  deployment path.
+- Runtime authority is expected to be a `tcpip` socket capability (listener)
+  and a storage capability. No MMIO, interrupt, or DMA authority belongs to the
+  broker.
+- TLS is an open question: the CharlotteOS connector requires verified TLS and
+  `embedded-tls` is client-only. The host milestones use plaintext with an
+  external test client; the in-guest connector path needs either a server TLS
+  implementation or a reviewed test-only plaintext profile.
+
+## 9. Open questions
+
+- Which record batch versions beyond v2 should the subset admit, if any?
+- Is a dedicated per-partition Raft group acceptable, or should partitioning
+  state live in one replicated controller?
+- How should `acks=-1` be surfaced before a replica quorum exists: fail fast or
+  append locally with a degraded acknowledgement?
+- Does the EL0 transport use the existing `charlotte-kafka` client codec for
+  conformance tests, or a dedicated byte-level golden corpus shared by both?
+
+## 10. Milestones
+
+- **M0 - foundation (this change):** workspace, deterministic partition log,
+  shard-per-partition runtime over typed mailboxes, bounded wire subset codec,
+  host tests on the `sitas-unix` backend.
+- **M1 - host broker:** TCP front end, request loop, golden conformance against
+  `charlotte-kafka` request builders and response parsers.
+- **M2 - EL0:** `broker.elf` with a `tcpip` socket capability, signed and
+  staged, exercised by the in-guest connector.
+- **M3 - durable logs:** segmented storage with crash-recovery checks.
+- **M4 - replicated partitions:** followers, high watermark replication, and
+  leader failover against the existing distributed fixtures.

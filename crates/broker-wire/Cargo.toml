@@ -1,0 +1,12 @@
+[package]
+name = "broker-wire"
+version.workspace = true
+edition.workspace = true
+description = "Bounded Kafka wire subset for the CharlotteOS broker"
+
+[lib]
+test = true
+bench = false
+
+[dependencies]
+broker-core.workspace = true

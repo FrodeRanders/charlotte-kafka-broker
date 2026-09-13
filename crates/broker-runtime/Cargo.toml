@@ -1,0 +1,13 @@
+[package]
+name = "broker-runtime"
+version.workspace = true
+edition.workspace = true
+description = "Sitas shard services for the CharlotteOS Kafka broker"
+
+[lib]
+test = true
+bench = false
+
+[dependencies]
+broker-core.workspace = true
+sitas-core.workspace = true

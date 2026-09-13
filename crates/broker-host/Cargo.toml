@@ -1,0 +1,14 @@
+[package]
+name = "broker-host"
+version.workspace = true
+edition.workspace = true
+description = "Host-side test harness for the CharlotteOS Kafka broker"
+
+[lib]
+test = true
+bench = false
+
+[dev-dependencies]
+broker-core.workspace = true
+broker-runtime.workspace = true
+sitas-unix.workspace = true
