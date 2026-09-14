@@ -63,6 +63,40 @@ pub struct MetadataResponse {
     pub topics: Vec<TopicMetadata>,
 }
 
+/// Coordinator lookup response.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FindCoordinatorResponse {
+    pub error: i16,
+    pub node_id: i32,
+    pub host: Vec<u8>,
+    pub port: i32,
+}
+
+/// Producer identity allocation response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InitProducerIdResponse {
+    pub error: i16,
+    pub producer_id: i64,
+    pub producer_epoch: i16,
+}
+
+/// One partition enlistment result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TransactionPartitionResult {
+    pub topic: Vec<u8>,
+    pub partitions: Vec<(i32, i16)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JoinGroupResponse {
+    pub error: i16,
+    pub generation: i32,
+    pub protocol: Vec<u8>,
+    pub leader: Vec<u8>,
+    pub member_id: Vec<u8>,
+    pub members: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
 /// One produce result partition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProducePartitionResult {
@@ -218,6 +252,129 @@ pub fn encode_metadata(correlation_id: i32, response: &MetadataResponse) -> Resu
             }
         }
     }
+    Ok(encoder.finish())
+}
+
+/// Encodes a FindCoordinator v0 response.
+pub fn encode_find_coordinator(
+    correlation_id: i32,
+    response: &FindCoordinatorResponse,
+) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.i32(0);
+    encoder.i16(response.error);
+    encoder.nullable_string(None)?;
+    encoder.i32(response.node_id);
+    encoder.string(&response.host)?;
+    encoder.i32(response.port);
+    Ok(encoder.finish())
+}
+
+/// Encodes an InitProducerId v0 response.
+pub fn encode_init_producer_id(
+    correlation_id: i32,
+    response: InitProducerIdResponse,
+) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.i32(0);
+    encoder.i16(response.error);
+    encoder.i64(response.producer_id);
+    encoder.i16(response.producer_epoch);
+    Ok(encoder.finish())
+}
+
+/// Encodes an AddPartitionsToTxn v0 response.
+pub fn encode_add_partitions_to_txn(
+    correlation_id: i32,
+    topics: &[TransactionPartitionResult],
+) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.i32(0);
+    encoder.array_len(topics.len())?;
+    for topic in topics {
+        encoder.string(&topic.topic)?;
+        encoder.array_len(topic.partitions.len())?;
+        for (partition, error) in &topic.partitions {
+            encoder.i32(*partition);
+            encoder.i16(*error);
+        }
+    }
+    Ok(encoder.finish())
+}
+
+/// Encodes an EndTxn v0 response.
+pub fn encode_end_txn(correlation_id: i32, error: i16) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.i32(0);
+    encoder.i16(error);
+    Ok(encoder.finish())
+}
+
+pub fn encode_join_group(
+    correlation_id: i32,
+    response: &JoinGroupResponse,
+) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.i16(response.error);
+    encoder.i32(response.generation);
+    encoder.string(&response.protocol)?;
+    encoder.string(&response.leader)?;
+    encoder.string(&response.member_id)?;
+    encoder.array_len(response.members.len())?;
+    for (member, metadata) in &response.members {
+        encoder.string(member)?;
+        encoder.bytes(metadata)?;
+    }
+    Ok(encoder.finish())
+}
+
+pub fn encode_sync_group(
+    correlation_id: i32,
+    error: i16,
+    assignment: &[u8],
+) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.i16(error);
+    encoder.bytes(assignment)?;
+    Ok(encoder.finish())
+}
+
+pub fn encode_group_error(correlation_id: i32, error: i16) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.i16(error);
+    Ok(encoder.finish())
+}
+
+pub fn encode_offset_fetch(
+    correlation_id: i32,
+    topic: &[u8],
+    partition: i32,
+    offset: i64,
+    error: i16,
+) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.array_len(1)?;
+    encoder.string(topic)?;
+    encoder.array_len(1)?;
+    encoder.i32(partition);
+    encoder.i64(offset);
+    encoder.nullable_string(None)?;
+    encoder.i16(error);
+    Ok(encoder.finish())
+}
+
+pub fn encode_offset_commit(
+    correlation_id: i32,
+    topic: &[u8],
+    partition: i32,
+    error: i16,
+) -> Result<Vec<u8>, Error> {
+    let mut encoder = Encoder::response(correlation_id);
+    encoder.array_len(1)?;
+    encoder.string(topic)?;
+    encoder.array_len(1)?;
+    encoder.i32(partition);
+    encoder.i16(error);
     Ok(encoder.finish())
 }
 
@@ -484,7 +641,21 @@ mod tests {
             assert_eq!(min, max);
             assert!(matches!(
                 *api_key,
-                api::PRODUCE | api::FETCH | api::LIST_OFFSETS | api::METADATA | api::API_VERSIONS
+                api::PRODUCE
+                    | api::FETCH
+                    | api::LIST_OFFSETS
+                    | api::METADATA
+                    | api::API_VERSIONS
+                    | api::FIND_COORDINATOR
+                    | api::INIT_PRODUCER_ID
+                    | api::ADD_PARTITIONS_TO_TXN
+                    | api::END_TXN
+                    | api::JOIN_GROUP
+                    | api::SYNC_GROUP
+                    | api::HEARTBEAT
+                    | api::LEAVE_GROUP
+                    | api::OFFSET_COMMIT
+                    | api::OFFSET_FETCH
             ));
             assert_eq!(
                 *min,
@@ -494,6 +665,16 @@ mod tests {
                     api::LIST_OFFSETS => version::LIST_OFFSETS,
                     api::METADATA => version::METADATA,
                     api::API_VERSIONS => version::API_VERSIONS,
+                    api::FIND_COORDINATOR => version::FIND_COORDINATOR,
+                    api::INIT_PRODUCER_ID => version::INIT_PRODUCER_ID,
+                    api::ADD_PARTITIONS_TO_TXN => version::ADD_PARTITIONS_TO_TXN,
+                    api::END_TXN => version::END_TXN,
+                    api::JOIN_GROUP => version::JOIN_GROUP,
+                    api::SYNC_GROUP => version::SYNC_GROUP,
+                    api::HEARTBEAT => version::HEARTBEAT,
+                    api::LEAVE_GROUP => version::LEAVE_GROUP,
+                    api::OFFSET_COMMIT => version::OFFSET_COMMIT,
+                    api::OFFSET_FETCH => version::OFFSET_FETCH,
                     _ => unreachable!(),
                 }
             );

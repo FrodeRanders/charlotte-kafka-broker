@@ -2,7 +2,10 @@
 
 use core::fmt;
 
-use broker_core::LogError;
+use broker_core::{
+    CoordinationError,
+    LogError,
+};
 
 /// A failed broker operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +20,8 @@ pub enum BrokerError {
     UnexpectedReply,
     /// The deterministic core rejected the operation.
     Core(LogError),
+    /// A transaction or consumer-group state transition was fenced/rejected.
+    Coordination(CoordinationError),
 }
 
 impl From<LogError> for BrokerError {
@@ -33,6 +38,7 @@ impl fmt::Display for BrokerError {
             Self::ReplyTimeout => write!(f, "shard reply timed out"),
             Self::UnexpectedReply => write!(f, "unexpected shard reply"),
             Self::Core(error) => write!(f, "broker core error: {error}"),
+            Self::Coordination(error) => write!(f, "coordination error: {error}"),
         }
     }
 }

@@ -236,6 +236,47 @@ it ever falls behind retention. The runner creates and repairs its own Python
 virtualenv on first use (`CHARLOTTE_SOAK_PYTHON` selects the interpreter), so a
 host only needs `python3`, Docker, and QEMU.
 
+If the load client fails, the runner deliberately leaves the guest alive and
+prints the wrapper PID, QEMU PID file, serial log, packet capture, QEMU monitor
+socket, and GDB port. This makes the failure state inspectable instead of
+destroying it in the shell exit trap. The runner's calculated safety timeout
+still provides an eventual upper bound. Unattended automation that prefers the
+old teardown behavior passes `--cleanup-on-failure`; `--keep` continues to mean
+that a successful run waits for the guest's hold period instead of cleaning it
+up immediately. `CATTEN_SOAK_GDB_PORT` selects the debugging port and
+`CATTEN_SOAK_NET_DUMP=0` disables the default packet capture.
+
+The EL0 broker emits a low-rate progress heartbeat rather than logging every
+Kafka request. Its cumulative `frames`, `handled`, and `sent` counters localize
+a stall to receive, shard dispatch/encoding, or socket send. The `last` field
+is `<connection>:<stage>` and uses stages 1 accepted, 2 bytes received,
+3 dispatching, 4 handled, 5 sending, 6 sent, 7 receive error, 8 engine error,
+9 send error, and 10 closed.
+The accompanying API key/version and correlation ID identify the last complete
+request frame. CharlotteOS's `tcpip` heartbeat reports the counts of listening,
+connecting, established, closing, and closed TCP sockets together with pending
+and ready receives, so the broker and transport views can be correlated.
+
+The EL0 listener also records a stable `SessionId` for each accepted
+connection, assigns it to one of the logical session shards, and logs that
+assignment. The current handler remains one thread per connection, but its
+placement is no longer hard-coded to shard 0. Session placement owns protocol
+state only; partition logs continue to be routed by `(topic, partition)`.
+
+Transaction and consumer-group coordination follows the same ownership rule.
+The runtime coordinator is a single writer: `transactional_id` owns producer
+epochs and enlisted partitions, while `group_id` owns members, generations,
+assignments, and committed offsets. Applications use typed coordinator calls;
+they do not share locks or mutate partition state directly. A stale producer
+epoch or group generation is rejected, making reconnect and rebalance
+behaviour explicit. Transactional records are tagged in their owning log and
+read-committed consumers hide pending or aborted batches. The state is
+currently in memory and a transaction may enlist consumer offsets; committed
+transactions advance those offsets while aborted transactions leave them
+unchanged. The basic Kafka transaction and group lifecycle is available on the
+wire; the state will be promoted to the cluster's durable control plane before
+group failover and production recovery are enabled.
+
 ## 4. What must change in CharlotteOS
 
 These are OS-side or operations work items, not patches from this repository:

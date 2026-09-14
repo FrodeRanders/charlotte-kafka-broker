@@ -19,9 +19,12 @@ use core::{
 
 use broker_core::{
     FetchWindow,
+    GroupAssignment,
+    ProducerIdentity,
     RecordData,
     TopicCatalog,
     TopicMetadata,
+    TransactionOffset,
 };
 use sitas_core::{
     shard::ShardId,
@@ -37,6 +40,8 @@ use sitas_core::{
 use crate::{
     error::BrokerError,
     message::{
+        CoordinationRequest,
+        CoordinationResult,
         PartitionCommand,
         PartitionResult,
     },
@@ -202,6 +207,19 @@ impl Broker {
         max_records: usize,
         max_bytes: usize,
     ) -> Result<FetchWindow, BrokerError> {
+        self.fetch_with_isolation(topic, partition, offset, max_records, max_bytes, false)
+    }
+
+    /// Reads a partition with explicit Kafka isolation semantics.
+    pub fn fetch_with_isolation(
+        &self,
+        topic: &[u8],
+        partition: i32,
+        offset: i64,
+        max_records: usize,
+        max_bytes: usize,
+        read_committed: bool,
+    ) -> Result<FetchWindow, BrokerError> {
         self.catalog.check_partition(topic, partition)?;
         let result = self.call(topic, partition, |reply| PartitionCommand::Fetch {
             topic: Vec::from(topic),
@@ -209,6 +227,7 @@ impl Broker {
             offset,
             max_records,
             max_bytes,
+            read_committed,
             reply,
         })?;
         match result {
@@ -247,6 +266,237 @@ impl Broker {
     /// Partition count for a topic, if configured.
     pub fn partition_count(&self, topic: &[u8]) -> Option<i32> {
         self.catalog.partition_count(topic)
+    }
+
+    /// Issues (or fences) the producer identity for a transactional id.
+    pub fn init_producer(&self, transactional_id: &[u8]) -> Result<ProducerIdentity, BrokerError> {
+        match self.coordinate(CoordinationRequest::InitProducer {
+            transactional_id: Vec::from(transactional_id),
+        })? {
+            CoordinationResult::Producer(identity) => Ok(identity),
+            _ => Err(BrokerError::UnexpectedReply),
+        }
+    }
+
+    /// Enlists a partition in an ongoing transaction.
+    pub fn add_transaction_partition(
+        &self,
+        transactional_id: &[u8],
+        producer: ProducerIdentity,
+        topic: &[u8],
+        partition: i32,
+    ) -> Result<(), BrokerError> {
+        self.coordinate(CoordinationRequest::AddPartition {
+            transactional_id: Vec::from(transactional_id),
+            producer,
+            topic: Vec::from(topic),
+            partition,
+        })
+        .and_then(applied)
+    }
+
+    /// Checks the producer epoch and enlisted partition before appending.
+    pub fn validate_transactional_produce(
+        &self,
+        transactional_id: &[u8],
+        producer: ProducerIdentity,
+        topic: &[u8],
+        partition: i32,
+    ) -> Result<(), BrokerError> {
+        self.coordinate(CoordinationRequest::ValidateProduce {
+            transactional_id: Vec::from(transactional_id),
+            producer,
+            topic: Vec::from(topic),
+            partition,
+        })
+        .and_then(applied)
+    }
+
+    /// Validates a transactional append and then routes it to the owning
+    /// partition shard. The append itself remains atomic at the partition;
+    /// commit markers/read-committed filtering are a later log integration.
+    pub fn produce_transactional(
+        &self,
+        transactional_id: &[u8],
+        producer: ProducerIdentity,
+        topic: &[u8],
+        partition: i32,
+        records: Vec<RecordData>,
+    ) -> Result<i64, BrokerError> {
+        self.validate_transactional_produce(transactional_id, producer, topic, partition)?;
+        self.catalog.check_partition(topic, partition)?;
+        let result =
+            self.call(topic, partition, |reply| PartitionCommand::ProduceTransactional {
+                topic: Vec::from(topic),
+                partition,
+                records,
+                producer_id: producer.id,
+                reply,
+            })?;
+        match result {
+            PartitionResult::Produced {
+                base_offset,
+            } => Ok(base_offset),
+            PartitionResult::Failed(error) => Err(BrokerError::Core(error)),
+            _ => Err(BrokerError::UnexpectedReply),
+        }
+    }
+
+    /// Enlists a consumer offset so it is committed atomically with the
+    /// producer transaction.
+    pub fn add_transaction_offset(
+        &self,
+        transactional_id: &[u8],
+        producer: ProducerIdentity,
+        offset: TransactionOffset,
+    ) -> Result<(), BrokerError> {
+        self.coordinate(CoordinationRequest::AddOffset {
+            transactional_id: Vec::from(transactional_id),
+            producer,
+            offset,
+        })
+        .and_then(applied)
+    }
+
+    /// Commits or aborts an ongoing transaction and fences its identity.
+    pub fn end_transaction(
+        &self,
+        transactional_id: &[u8],
+        producer: ProducerIdentity,
+        commit: bool,
+    ) -> Result<(), BrokerError> {
+        let result = self.coordinate(CoordinationRequest::EndTransaction {
+            transactional_id: Vec::from(transactional_id),
+            producer,
+            commit,
+        })?;
+        let completion = match result {
+            CoordinationResult::TransactionCompleted(completion) => completion,
+            _ => return Err(BrokerError::UnexpectedReply),
+        };
+        for (topic, partition) in completion.partitions {
+            let result =
+                self.call(&topic, partition, |reply| PartitionCommand::ResolveTransaction {
+                    producer_id: producer.id,
+                    commit,
+                    reply,
+                })?;
+            if !matches!(result, PartitionResult::Resolved) {
+                return Err(BrokerError::UnexpectedReply);
+            }
+        }
+        if commit {
+            for offset in completion.offsets {
+                self.commit_group_offset(
+                    &offset.group_id,
+                    offset.generation,
+                    &offset.topic,
+                    offset.partition,
+                    offset.offset,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Joins a group and returns a deterministic assignment for every member.
+    pub fn join_group(
+        &self,
+        group_id: &[u8],
+        member_id: &[u8],
+        subscriptions: Vec<Vec<u8>>,
+    ) -> Result<(i32, Vec<GroupAssignment>), BrokerError> {
+        let partitions = self
+            .catalog
+            .metadata()
+            .into_iter()
+            .flat_map(|topic| {
+                (0..topic.partitions).map(move |partition| (topic.name.clone(), partition))
+            })
+            .collect();
+        match self.coordinate(CoordinationRequest::JoinGroup {
+            group_id: Vec::from(group_id),
+            member_id: Vec::from(member_id),
+            subscriptions,
+            partitions,
+        })? {
+            CoordinationResult::Group {
+                generation,
+                assignments,
+            } => Ok((generation, assignments)),
+            _ => Err(BrokerError::UnexpectedReply),
+        }
+    }
+
+    pub fn heartbeat_group(
+        &self,
+        group_id: &[u8],
+        member_id: &[u8],
+        generation: i32,
+    ) -> Result<(), BrokerError> {
+        self.coordinate(CoordinationRequest::Heartbeat {
+            group_id: Vec::from(group_id),
+            member_id: Vec::from(member_id),
+            generation,
+        })
+        .and_then(applied)
+    }
+
+    pub fn leave_group(
+        &self,
+        group_id: &[u8],
+        member_id: &[u8],
+        generation: i32,
+    ) -> Result<(), BrokerError> {
+        self.coordinate(CoordinationRequest::LeaveGroup {
+            group_id: Vec::from(group_id),
+            member_id: Vec::from(member_id),
+            generation,
+        })
+        .and_then(applied)
+    }
+
+    /// Removes a member using Kafka LeaveGroup v0 semantics (no generation).
+    pub fn leave_group_any(&self, group_id: &[u8], member_id: &[u8]) -> Result<(), BrokerError> {
+        self.coordinate(CoordinationRequest::LeaveGroupAny {
+            group_id: Vec::from(group_id),
+            member_id: Vec::from(member_id),
+        })
+        .and_then(applied)
+    }
+
+    pub fn commit_group_offset(
+        &self,
+        group_id: &[u8],
+        generation: i32,
+        topic: &[u8],
+        partition: i32,
+        offset: i64,
+    ) -> Result<(), BrokerError> {
+        self.coordinate(CoordinationRequest::CommitOffset {
+            group_id: Vec::from(group_id),
+            generation,
+            topic: Vec::from(topic),
+            partition,
+            offset,
+        })
+        .and_then(applied)
+    }
+
+    pub fn group_offset(
+        &self,
+        group_id: &[u8],
+        topic: &[u8],
+        partition: i32,
+    ) -> Result<Option<i64>, BrokerError> {
+        match self.coordinate(CoordinationRequest::FetchOffset {
+            group_id: Vec::from(group_id),
+            topic: Vec::from(topic),
+            partition,
+        })? {
+            CoordinationResult::Offset(offset) => Ok(offset),
+            _ => Err(BrokerError::UnexpectedReply),
+        }
     }
 
     /// Shard that owns `(topic, partition)`.
@@ -317,6 +567,56 @@ impl Broker {
         )?;
         wait_reply(&mut reply_receiver, self.parker.as_ref(), self.park_timeout, self.max_retries)
     }
+
+    fn coordinate(&self, request: CoordinationRequest) -> Result<CoordinationResult, BrokerError> {
+        let (reply_sender, mut reply_receiver) =
+            channel(queue_capacity(1)).map_err(|_| BrokerError::InvalidConfig)?;
+        send_coordination_with_retry(
+            &self.shards[0],
+            PartitionCommand::Coordinate {
+                request,
+                reply: reply_sender,
+            },
+            self.parker.as_ref(),
+            self.park_timeout,
+            self.max_retries,
+        )?;
+        match wait_reply(
+            &mut reply_receiver,
+            self.parker.as_ref(),
+            self.park_timeout,
+            self.max_retries,
+        )? {
+            PartitionResult::Coordination(result) => result.map_err(BrokerError::Coordination),
+            _ => Err(BrokerError::UnexpectedReply),
+        }
+    }
+}
+
+fn applied(result: CoordinationResult) -> Result<(), BrokerError> {
+    match result {
+        CoordinationResult::Applied => Ok(()),
+        _ => Err(BrokerError::UnexpectedReply),
+    }
+}
+
+fn send_coordination_with_retry(
+    sender: &ShardSender<PartitionCommand>,
+    mut command: PartitionCommand,
+    parker: &dyn ShardParker,
+    park_timeout: Duration,
+    max_retries: u32,
+) -> Result<(), BrokerError> {
+    for _ in 0..max_retries.max(1) {
+        match sender.try_send(command) {
+            Ok(()) => return Ok(()),
+            Err(returned) => {
+                command = returned;
+                parker.park(Some(park_timeout));
+            }
+        }
+    }
+    Err(BrokerError::MailboxUnavailable)
 }
 
 impl Drop for Broker {

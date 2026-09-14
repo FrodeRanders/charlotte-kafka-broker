@@ -9,6 +9,16 @@ pub mod api {
     pub const LIST_OFFSETS: i16 = 2;
     pub const METADATA: i16 = 3;
     pub const API_VERSIONS: i16 = 18;
+    pub const FIND_COORDINATOR: i16 = 10;
+    pub const INIT_PRODUCER_ID: i16 = 22;
+    pub const ADD_PARTITIONS_TO_TXN: i16 = 24;
+    pub const END_TXN: i16 = 26;
+    pub const OFFSET_COMMIT: i16 = 8;
+    pub const OFFSET_FETCH: i16 = 9;
+    pub const JOIN_GROUP: i16 = 11;
+    pub const HEARTBEAT: i16 = 12;
+    pub const LEAVE_GROUP: i16 = 13;
+    pub const SYNC_GROUP: i16 = 14;
 }
 
 /// The single request/response version accepted for each API.
@@ -18,6 +28,16 @@ pub mod version {
     pub const LIST_OFFSETS: i16 = 1;
     pub const METADATA: i16 = 1;
     pub const API_VERSIONS: i16 = 0;
+    pub const FIND_COORDINATOR: i16 = 1;
+    pub const INIT_PRODUCER_ID: i16 = 0;
+    pub const ADD_PARTITIONS_TO_TXN: i16 = 0;
+    pub const END_TXN: i16 = 0;
+    pub const OFFSET_COMMIT: i16 = 2;
+    pub const OFFSET_FETCH: i16 = 1;
+    pub const JOIN_GROUP: i16 = 1;
+    pub const HEARTBEAT: i16 = 0;
+    pub const LEAVE_GROUP: i16 = 0;
+    pub const SYNC_GROUP: i16 = 0;
 }
 
 /// The subset advertised in ApiVersions responses, as `(api_key, min, max)`.
@@ -27,6 +47,16 @@ pub const SUPPORTED_VERSIONS: &[(i16, i16, i16)] = &[
     (api::LIST_OFFSETS, version::LIST_OFFSETS, version::LIST_OFFSETS),
     (api::METADATA, version::METADATA, version::METADATA),
     (api::API_VERSIONS, version::API_VERSIONS, version::API_VERSIONS),
+    (api::FIND_COORDINATOR, version::FIND_COORDINATOR, version::FIND_COORDINATOR),
+    (api::INIT_PRODUCER_ID, version::INIT_PRODUCER_ID, version::INIT_PRODUCER_ID),
+    (api::ADD_PARTITIONS_TO_TXN, version::ADD_PARTITIONS_TO_TXN, version::ADD_PARTITIONS_TO_TXN),
+    (api::END_TXN, version::END_TXN, version::END_TXN),
+    (api::JOIN_GROUP, version::JOIN_GROUP, version::JOIN_GROUP),
+    (api::SYNC_GROUP, version::SYNC_GROUP, version::SYNC_GROUP),
+    (api::HEARTBEAT, version::HEARTBEAT, version::HEARTBEAT),
+    (api::LEAVE_GROUP, version::LEAVE_GROUP, version::LEAVE_GROUP),
+    (api::OFFSET_COMMIT, version::OFFSET_COMMIT, version::OFFSET_COMMIT),
+    (api::OFFSET_FETCH, version::OFFSET_FETCH, version::OFFSET_FETCH),
 ];
 
 pub const NO_ERROR: i16 = 0;
@@ -34,6 +64,9 @@ pub const OFFSET_OUT_OF_RANGE: i16 = 1;
 pub const UNKNOWN_TOPIC_OR_PARTITION: i16 = 3;
 pub const UNSUPPORTED_VERSION: i16 = 35;
 pub const UNKNOWN_SERVER_ERROR: i16 = -1;
+pub const INVALID_REQUEST: i16 = 42;
+pub const INVALID_PRODUCER_EPOCH: i16 = 47;
+pub const INVALID_TXN_STATE: i16 = 48;
 
 /// Maximum accepted frame payload length.
 pub const MAX_FRAME_LEN: usize = 1024 * 1024;
@@ -83,6 +116,20 @@ impl core::error::Error for Error {}
 pub const fn is_supported_api(api_key: i16) -> bool {
     matches!(
         api_key,
-        api::PRODUCE | api::FETCH | api::LIST_OFFSETS | api::METADATA | api::API_VERSIONS
+        api::PRODUCE
+            | api::FETCH
+            | api::LIST_OFFSETS
+            | api::METADATA
+            | api::API_VERSIONS
+            | api::FIND_COORDINATOR
+            | api::INIT_PRODUCER_ID
+            | api::ADD_PARTITIONS_TO_TXN
+            | api::END_TXN
+            | api::OFFSET_COMMIT
+            | api::OFFSET_FETCH
+            | api::JOIN_GROUP
+            | api::HEARTBEAT
+            | api::LEAVE_GROUP
+            | api::SYNC_GROUP
     )
 }

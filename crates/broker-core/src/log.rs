@@ -92,6 +92,8 @@ pub struct Record {
 pub struct FetchWindow {
     /// Next offset to be assigned; readers at this offset see no records.
     pub high_watermark: i64,
+    /// Last offset that is safe for read-committed consumers.
+    pub last_stable_offset: i64,
     /// Owned records beginning at the requested offset.
     pub records: Vec<Record>,
 }
@@ -100,6 +102,15 @@ pub struct FetchWindow {
 struct StoredBatch {
     base_offset: i64,
     records: Vec<Record>,
+    transaction: Option<i64>,
+    state: BatchState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BatchState {
+    Pending,
+    Committed,
+    Aborted,
 }
 
 /// One partition's ordered record history.
@@ -186,6 +197,8 @@ impl PartitionLog {
         let batch = StoredBatch {
             base_offset,
             records,
+            transaction: None,
+            state: BatchState::Committed,
         };
         self.retained_bytes += batch_size(&batch);
         self.batches.push(batch);
@@ -197,6 +210,55 @@ impl PartitionLog {
     pub fn append_data(&mut self, records: &[RecordData]) -> Result<i64, LogError> {
         let inputs: Vec<RecordInput<'_>> = records.iter().map(RecordData::as_input).collect();
         self.append(&inputs)
+    }
+
+    /// Appends a batch belonging to a producer transaction. It is hidden from
+    /// read-committed readers until the transaction is resolved.
+    pub fn append_transactional(
+        &mut self,
+        records: &[RecordData],
+        producer_id: i64,
+    ) -> Result<i64, LogError> {
+        if records.is_empty() {
+            return Err(LogError::EmptyAppend);
+        }
+        if records.len() > MAX_APPEND_RECORDS {
+            return Err(LogError::TooManyRecords);
+        }
+        let base_offset = self.next_offset;
+        let mut stored = Vec::with_capacity(records.len());
+        for (index, input) in records.iter().enumerate() {
+            stored.push(Record {
+                offset: base_offset + index as i64,
+                timestamp_ms: input.timestamp_ms,
+                key: input.key.clone(),
+                value: input.value.clone(),
+            });
+        }
+        self.next_offset = base_offset + stored.len() as i64;
+        let batch = StoredBatch {
+            base_offset,
+            records: stored,
+            transaction: Some(producer_id),
+            state: BatchState::Pending,
+        };
+        self.retained_bytes += batch_size(&batch);
+        self.batches.push(batch);
+        self.enforce_retention();
+        Ok(base_offset)
+    }
+
+    /// Commits or aborts all batches belonging to a producer in this log.
+    pub fn commit_transaction(&mut self, producer_id: i64, commit: bool) {
+        for batch in &mut self.batches {
+            if batch.transaction == Some(producer_id) {
+                batch.state = if commit {
+                    BatchState::Committed
+                } else {
+                    BatchState::Aborted
+                };
+            }
+        }
     }
 
     /// Reads records beginning at `offset`, bounded by `max_records` and an
@@ -216,6 +278,27 @@ impl PartitionLog {
         max_records: usize,
         max_bytes: usize,
     ) -> Result<FetchWindow, LogError> {
+        self.fetch_inner(offset, max_records, max_bytes, false)
+    }
+
+    /// Reads only committed transactional batches when requested.
+    pub fn fetch_with_isolation(
+        &self,
+        offset: i64,
+        max_records: usize,
+        max_bytes: usize,
+        read_committed: bool,
+    ) -> Result<FetchWindow, LogError> {
+        self.fetch_inner(offset, max_records, max_bytes, read_committed)
+    }
+
+    fn fetch_inner(
+        &self,
+        offset: i64,
+        max_records: usize,
+        max_bytes: usize,
+        read_committed: bool,
+    ) -> Result<FetchWindow, LogError> {
         if offset < self.start_offset() || offset > self.next_offset {
             return Err(LogError::OffsetOutOfRange);
         }
@@ -227,6 +310,12 @@ impl PartitionLog {
             'batches: for batch in &self.batches[start_batch..] {
                 for record in &batch.records {
                     if record.offset < offset {
+                        continue;
+                    }
+                    if read_committed
+                        && batch.transaction.is_some()
+                        && batch.state != BatchState::Committed
+                    {
                         continue;
                     }
                     if records.len() == max_records {
@@ -242,8 +331,14 @@ impl PartitionLog {
             }
         }
 
+        let last_stable_offset = self
+            .batches
+            .iter()
+            .find(|batch| batch.transaction.is_some() && batch.state == BatchState::Pending)
+            .map_or(self.next_offset, |batch| batch.base_offset);
         Ok(FetchWindow {
             high_watermark: self.next_offset,
+            last_stable_offset,
             records,
         })
     }
@@ -352,6 +447,24 @@ mod tests {
         let window = log.fetch(1, 10, 1024).expect("fetch");
         assert!(window.records.is_empty());
         assert_eq!(window.high_watermark, 1);
+    }
+
+    #[test]
+    fn read_committed_hides_pending_and_aborted_batches() {
+        let mut log = PartitionLog::new();
+        log.append(&[input(b"plain")]).expect("append plain");
+        log.append_transactional(&[RecordData::from(input(b"pending"))], 7)
+            .expect("append pending");
+        let pending = log.fetch_with_isolation(0, 10, 4096, true).expect("fetch");
+        assert_eq!(pending.records.len(), 1);
+        assert_eq!(pending.last_stable_offset, 1);
+        log.commit_transaction(7, false);
+        let committed = log.fetch_with_isolation(0, 10, 4096, true).expect("fetch committed");
+        assert_eq!(committed.records.len(), 1);
+        assert_eq!(committed.last_stable_offset, 2);
+        assert_eq!(committed.records[0].value.as_deref(), Some(b"plain".as_slice()));
+        let uncommitted = log.fetch(0, 10, 4096).expect("fetch all");
+        assert_eq!(uncommitted.records.len(), 2);
     }
 
     #[test]

@@ -9,10 +9,21 @@
 
 extern crate alloc;
 
+pub mod coordination;
 pub mod error;
 pub mod log;
 pub mod topic;
 
+pub use coordination::{
+    CoordinationError,
+    GroupAssignment,
+    GroupCoordinator,
+    ProducerIdentity,
+    TransactionCompletion,
+    TransactionCoordinator,
+    TransactionOffset,
+    TransactionState,
+};
 pub use error::LogError;
 pub use log::{
     FetchWindow,

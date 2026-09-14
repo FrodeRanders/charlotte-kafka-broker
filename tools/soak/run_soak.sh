@@ -18,6 +18,9 @@
 # Usage:
 #   tools/soak/run_soak.sh --host  --duration 30 --rate 20
 #   CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 20
+#
+# A QEMU guest is preserved by default when the load client fails, so the
+# running kernel can be inspected. Use --cleanup-on-failure in unattended CI.
 set -euo pipefail
 
 # shellcheck source=/dev/null
@@ -35,6 +38,7 @@ MAX_ERRORS="100"
 BOOTSTRAP=""
 NO_BUILD="0"
 KEEP="0"
+CLEANUP_ON_FAILURE="0"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -47,7 +51,8 @@ while [ "$#" -gt 0 ]; do
         --bootstrap) BOOTSTRAP="$2"; shift 2 ;;
         --no-build) NO_BUILD="1"; shift ;;
         --keep) KEEP="1"; shift ;;
-        *) echo "usage: $0 [--host|--qemu] [--arch aarch64|x86_64|auto] [--duration S] [--rate N] [--max-errors N] [--bootstrap HOST:PORT] [--no-build] [--keep]" >&2; exit 2 ;;
+        --cleanup-on-failure) CLEANUP_ON_FAILURE="1"; shift ;;
+        *) echo "usage: $0 [--host|--qemu] [--arch aarch64|x86_64|auto] [--duration S] [--rate N] [--max-errors N] [--bootstrap HOST:PORT] [--no-build] [--keep] [--cleanup-on-failure]" >&2; exit 2 ;;
     esac
 done
 
@@ -185,6 +190,17 @@ TIMEOUT=$((HOLD + 600))
 LOG="$BROKER_ROOT/target/soak-qemu.log"
 CLIENT_LOG="$BROKER_ROOT/target/soak-client.log"
 RESULT_FILE="$OS_DIR/target/deployment-ingress-test/result"
+RUNNER_PID_FILE="$BROKER_ROOT/target/soak-runner.pid"
+QEMU_PID_FILE="$BROKER_ROOT/target/soak-qemu.pid"
+GDB_PORT="${CATTEN_SOAK_GDB_PORT:-1234}"
+NET_DUMP="${CATTEN_SOAK_NET_DUMP:-1}"
+MONITOR_SOCKET="/tmp/charlotte-monitor.sock"
+PCAP_FILE="/tmp/charlotte-net.pcap"
+SERIAL_LOG="/tmp/charlotte-serial.log"
+if [ "$ARCH" = "x86_64" ]; then
+    SERIAL_LOG="/tmp/charlotte-x86-serial.log"
+fi
+KERNEL_BINARY="$OS_DIR/target/${ARCH}-unknown-none-catten/debug/catten"
 
 if [ "$NO_BUILD" != "1" ]; then
     echo ">>> building broker-el0 for $ARCH with advertised endpoint 127.0.0.1:$APP_HOST_PORT"
@@ -192,7 +208,7 @@ if [ "$NO_BUILD" != "1" ]; then
         "$BROKER_ROOT/tools/build-elf.sh" --arch "$ARCH"
     "$BROKER_ROOT/tools/package.sh" sign
 fi
-rm -f "$RESULT_FILE"
+rm -f "$RESULT_FILE" "$RUNNER_PID_FILE" "$QEMU_PID_FILE" "$MONITOR_SOCKET" "$PCAP_FILE"
 
 echo ">>> booting $ARCH guest; hold=${HOLD}s timeout=${TIMEOUT}s (log: $LOG)"
 CATTEN_DEPLOY_NAME=broker \
@@ -205,9 +221,15 @@ CATTEN_DEPLOY_GRANTS="tcpip=client broker=publish" \
 CATTEN_APP_HOST_PORT="$APP_HOST_PORT" \
 CATTEN_APP_GUEST_PORT=9092 \
 CATTEN_APP_HOLD_SECONDS="$HOLD" \
-"$RUNNER" debug --deployment-ingress-test --timeout "$TIMEOUT" \
+CATTEN_QEMU_PID_FILE="$QEMU_PID_FILE" \
+CATTEN_QEMU_MONITOR=1 \
+CATTEN_QEMU_NET_DUMP="$NET_DUMP" \
+CATTEN_QEMU_DEBUG_STUB=1 \
+"$RUNNER" debug --deployment-ingress-test --gdb-port "$GDB_PORT" \
+    --timeout "$TIMEOUT" \
     >"$LOG" 2>&1 &
 RUNNER_PID=$!
+printf '%s\n' "$RUNNER_PID" >"$RUNNER_PID_FILE"
 
 cleanup() {
     pkill -P "$RUNNER_PID" 2>/dev/null || true
@@ -215,6 +237,26 @@ cleanup() {
     wait "$RUNNER_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+preserve_guest() {
+    local reason="${1:-soak failure}"
+    trap - EXIT
+    disown "$RUNNER_PID" 2>/dev/null || true
+    echo ">>> $reason; leaving the CharlotteOS guest running for diagnosis" >&2
+    echo ">>> runner PID: $RUNNER_PID (recorded in $RUNNER_PID_FILE)" >&2
+    if [ -s "$QEMU_PID_FILE" ]; then
+        echo ">>> QEMU PID: $(tr -d '[:space:]' <"$QEMU_PID_FILE") (recorded in $QEMU_PID_FILE)" >&2
+    else
+        echo ">>> QEMU PID will be recorded in $QEMU_PID_FILE" >&2
+    fi
+    echo ">>> serial: $SERIAL_LOG" >&2
+    if [ "$NET_DUMP" = "1" ]; then
+        echo ">>> packet capture: $PCAP_FILE" >&2
+    fi
+    echo ">>> QEMU monitor: $MONITOR_SOCKET" >&2
+    echo ">>> debugger: lldb $KERNEL_BINARY -o 'gdb-remote $GDB_PORT'" >&2
+    echo ">>> the runner retains its ${TIMEOUT}s safety timeout" >&2
+}
 
 deadline=$((SECONDS + 900))
 while [ ! -f "$RESULT_FILE" ]; do
@@ -226,12 +268,25 @@ while [ ! -f "$RESULT_FILE" ]; do
     if [ "$SECONDS" -ge "$deadline" ]; then
         echo "error: broker did not become ready; tail of $LOG:" >&2
         tail -40 "$LOG" >&2 || true
+        if [ "$CLEANUP_ON_FAILURE" != "1" ]; then
+            preserve_guest "broker readiness deadline expired"
+        fi
         exit 1
     fi
     sleep 2
 done
 
+set +e
 run_client "$BOOTSTRAP" "$CLIENT_LOG"
+CLIENT_STATUS=$?
+set -e
+if [ "$CLIENT_STATUS" -ne 0 ]; then
+    if [ "$CLEANUP_ON_FAILURE" = "1" ]; then
+        exit "$CLIENT_STATUS"
+    fi
+    preserve_guest "load client failed (status $CLIENT_STATUS)"
+    exit "$CLIENT_STATUS"
+fi
 if [ "$KEEP" = "1" ]; then
     echo ">>> --keep set; guest stays up until the runner timeout"
     trap - EXIT

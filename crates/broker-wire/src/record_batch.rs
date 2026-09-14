@@ -5,8 +5,9 @@
 //! decoding drops the producer-provided offsets and encoding writes the stored
 //! offsets relative to the batch's base offset.
 //!
-//! Compression, control batches, and transactional batches are rejected:
-//! none of them are part of the supported subset.
+//! Compression and control batches are rejected. Transactional batches are
+//! accepted when their producer identity is present and are resolved by the
+//! runtime coordinator.
 
 use alloc::vec::Vec;
 
@@ -30,6 +31,13 @@ use crate::{
         MAX_RECORDS,
     },
 };
+
+/// Records decoded from a produce request and their optional producer identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodedRecordBatch {
+    pub records: Vec<RecordData>,
+    pub producer: Option<(i64, i16)>,
+}
 
 /// CRC32C (Castagnoli) of `bytes`, as required by record batch v2.
 pub fn crc32c(bytes: &[u8]) -> u32 {
@@ -117,23 +125,32 @@ pub fn encode_record_batch(base_offset: i64, records: &[Record]) -> Result<Vec<u
 /// batches, and [`Error::Invalid`] or [`Error::Incomplete`] for malformed
 /// input.
 pub fn decode_record_batches(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
+    Ok(decode_record_batches_with_identity(bytes)?.records)
+}
+
+/// Decodes records and the producer identity carried by a v2 batch.
+pub fn decode_record_batches_with_identity(bytes: &[u8]) -> Result<DecodedRecordBatch, Error> {
     if bytes.is_empty() {
         return Err(Error::Invalid);
     }
     match bytes.get(16) {
         Some(2) => decode_v2_record_set(bytes),
-        Some(0) | Some(1) => decode_legacy_message_set(bytes),
+        Some(0) | Some(1) => decode_legacy_message_set(bytes).map(|records| DecodedRecordBatch {
+            records,
+            producer: None,
+        }),
         _ => Err(Error::UnsupportedVersion),
     }
 }
 
-fn decode_v2_record_set(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
+fn decode_v2_record_set(bytes: &[u8]) -> Result<DecodedRecordBatch, Error> {
     if bytes.is_empty() {
         return Err(Error::Invalid);
     }
 
     let mut decoder = Decoder::new(bytes);
     let mut records = Vec::new();
+    let mut identity = None;
     while !decoder.done() {
         if decoder.remaining() < 12 {
             return Err(Error::Incomplete);
@@ -155,20 +172,27 @@ fn decode_v2_record_set(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
             return Err(Error::Checksum);
         }
         let attributes = batch_decoder.i16()?;
-        if attributes & 0x07 != 0 || attributes & 0x10 != 0 || attributes & 0x20 != 0 {
+        if attributes & 0x07 != 0 || attributes & 0x20 != 0 {
             return Err(Error::UnsupportedVersion);
         }
         let _last_offset_delta = batch_decoder.i32()?;
         let first_timestamp = batch_decoder.i64()?;
         let _max_timestamp = batch_decoder.i64()?;
-        let _producer_id = batch_decoder.i64()?;
-        let _producer_epoch = batch_decoder.i16()?;
+        let producer_id = batch_decoder.i64()?;
+        let producer_epoch = batch_decoder.i16()?;
         let _base_sequence = batch_decoder.i32()?;
         let count = batch_decoder.i32()?;
         if count < 0 || count as usize > MAX_RECORDS {
             return Err(Error::TooLarge);
         }
 
+        if attributes & 0x10 != 0 {
+            let next = (producer_id, producer_epoch);
+            if identity.is_some_and(|previous| previous != next) {
+                return Err(Error::Invalid);
+            }
+            identity = Some(next);
+        }
         for _ in 0..count {
             let len = read_varint(&mut batch_decoder)?;
             if len < 0 {
@@ -213,7 +237,10 @@ fn decode_v2_record_set(bytes: &[u8]) -> Result<Vec<RecordData>, Error> {
             return Err(Error::Invalid);
         }
     }
-    Ok(records)
+    Ok(DecodedRecordBatch {
+        records,
+        producer: identity,
+    })
 }
 
 /// Decodes a legacy message format v0/v1 set.

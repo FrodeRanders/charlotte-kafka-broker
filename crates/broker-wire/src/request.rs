@@ -13,7 +13,7 @@ use crate::{
         api,
         version,
     },
-    record_batch::decode_record_batches,
+    record_batch::decode_record_batches_with_identity,
 };
 
 /// Kafka request header version 1 (non-flexible).
@@ -36,6 +36,8 @@ pub struct ProducePartition {
     pub partition: i32,
     /// Decoded records to append.
     pub records: Vec<RecordData>,
+    /// Producer ID/epoch from a transactional record batch, if present.
+    pub producer: Option<(i64, i16)>,
 }
 
 /// One topic entry of a produce request.
@@ -90,6 +92,61 @@ pub struct ListOffsetsTopic {
 pub enum RequestBody {
     /// ApiVersions has no body.
     ApiVersions,
+    /// Finds the coordinator for a group or transactional id.
+    FindCoordinator {
+        key: Vec<u8>,
+        key_type: i8,
+    },
+    /// Allocates a producer identity for a transactional id.
+    InitProducerId {
+        transactional_id: Option<Vec<u8>>,
+        timeout_ms: i32,
+    },
+    AddPartitionsToTxn {
+        transactional_id: Vec<u8>,
+        producer_id: i64,
+        producer_epoch: i16,
+        topics: Vec<(Vec<u8>, Vec<i32>)>,
+    },
+    EndTxn {
+        transactional_id: Vec<u8>,
+        producer_id: i64,
+        producer_epoch: i16,
+        commit: bool,
+    },
+    JoinGroup {
+        group_id: Vec<u8>,
+        member_id: Vec<u8>,
+        subscriptions: Vec<Vec<u8>>,
+    },
+    SyncGroup {
+        group_id: Vec<u8>,
+        generation: i32,
+        member_id: Vec<u8>,
+        assignment: Vec<u8>,
+    },
+    Heartbeat {
+        group_id: Vec<u8>,
+        generation: i32,
+        member_id: Vec<u8>,
+    },
+    LeaveGroup {
+        group_id: Vec<u8>,
+        member_id: Vec<u8>,
+    },
+    OffsetCommit {
+        group_id: Vec<u8>,
+        generation: i32,
+        member_id: Vec<u8>,
+        topic: Vec<u8>,
+        partition: i32,
+        offset: i64,
+    },
+    OffsetFetch {
+        group_id: Vec<u8>,
+        topic: Vec<u8>,
+        partition: i32,
+    },
     /// Metadata for the listed topics, or every topic when `None`.
     Metadata {
         /// Requested topic names.
@@ -189,6 +246,22 @@ pub fn decode_request(frame: &[u8]) -> Result<Request, Error> {
 
     let body = match (api_key, api_version) {
         (api::API_VERSIONS, version::API_VERSIONS) => RequestBody::ApiVersions,
+        (api::FIND_COORDINATOR, version::FIND_COORDINATOR) => {
+            decode_find_coordinator(&mut decoder)?
+        }
+        (api::INIT_PRODUCER_ID, version::INIT_PRODUCER_ID) => {
+            decode_init_producer_id(&mut decoder)?
+        }
+        (api::ADD_PARTITIONS_TO_TXN, version::ADD_PARTITIONS_TO_TXN) => {
+            decode_add_partitions_to_txn(&mut decoder)?
+        }
+        (api::END_TXN, version::END_TXN) => decode_end_txn(&mut decoder)?,
+        (api::JOIN_GROUP, version::JOIN_GROUP) => decode_join_group(&mut decoder)?,
+        (api::SYNC_GROUP, version::SYNC_GROUP) => decode_sync_group(&mut decoder)?,
+        (api::HEARTBEAT, version::HEARTBEAT) => decode_heartbeat(&mut decoder)?,
+        (api::LEAVE_GROUP, version::LEAVE_GROUP) => decode_leave_group(&mut decoder)?,
+        (api::OFFSET_COMMIT, version::OFFSET_COMMIT) => decode_offset_commit(&mut decoder)?,
+        (api::OFFSET_FETCH, version::OFFSET_FETCH) => decode_offset_fetch(&mut decoder)?,
         (api::METADATA, version::METADATA) => decode_metadata(&mut decoder)?,
         (api::PRODUCE, version::PRODUCE) => decode_produce(&mut decoder)?,
         (api::FETCH, version::FETCH) => decode_fetch(&mut decoder)?,
@@ -207,6 +280,186 @@ pub fn decode_request(frame: &[u8]) -> Result<Request, Error> {
             client_id,
         },
         body,
+    })
+}
+
+fn decode_find_coordinator(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    let key = decoder.string_bytes()?.to_vec();
+    if key.is_empty() {
+        return Err(Error::Invalid);
+    }
+    let key_type = decoder.i8()?;
+    if key_type != 0 && key_type != 1 {
+        return Err(Error::Invalid);
+    }
+    Ok(RequestBody::FindCoordinator {
+        key,
+        key_type,
+    })
+}
+
+fn decode_init_producer_id(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    Ok(RequestBody::InitProducerId {
+        transactional_id: decoder.nullable_string_bytes()?.map(Vec::from),
+        timeout_ms: decoder.i32()?,
+    })
+}
+
+fn decode_add_partitions_to_txn(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    let transactional_id = decoder.string_bytes()?.to_vec();
+    let producer_id = decoder.i64()?;
+    let producer_epoch = decoder.i16()?;
+    let topic_count = decoder.array_len()?;
+    let mut topics = Vec::with_capacity(topic_count.min(decoder.remaining()));
+    for _ in 0..topic_count {
+        let topic = decoder.string_bytes()?.to_vec();
+        let count = decoder.array_len()?;
+        let mut partitions = Vec::with_capacity(count.min(decoder.remaining()));
+        for _ in 0..count {
+            let partition = decoder.i32()?;
+            if partition < 0 {
+                return Err(Error::Invalid);
+            }
+            partitions.push(partition);
+        }
+        topics.push((topic, partitions));
+    }
+    Ok(RequestBody::AddPartitionsToTxn {
+        transactional_id,
+        producer_id,
+        producer_epoch,
+        topics,
+    })
+}
+
+fn decode_end_txn(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    let transactional_id = decoder.string_bytes()?.to_vec();
+    let producer_id = decoder.i64()?;
+    let producer_epoch = decoder.i16()?;
+    let commit = decoder.i8()?;
+    if commit != 0 && commit != 1 {
+        return Err(Error::Invalid);
+    }
+    Ok(RequestBody::EndTxn {
+        transactional_id,
+        producer_id,
+        producer_epoch,
+        commit: commit != 0,
+    })
+}
+
+fn decode_join_group(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    let group_id = decoder.string_bytes()?.to_vec();
+    let session_timeout = decoder.i32()?;
+    let rebalance_timeout = decoder.i32()?;
+    if session_timeout < 0 || rebalance_timeout < 0 {
+        return Err(Error::Invalid);
+    }
+    let member_id = decoder.string_bytes()?.to_vec();
+    let _protocol_type = decoder.string_bytes()?;
+    let protocols = decoder.array_len()?;
+    if protocols == 0 {
+        return Err(Error::Invalid);
+    }
+    let _name = decoder.string_bytes()?;
+    let metadata = decoder.bytes()?.ok_or(Error::Invalid)?;
+    let mut metadata_decoder = Decoder::new(metadata);
+    let _version = metadata_decoder.i16()?;
+    let topic_count = metadata_decoder.array_len()?;
+    let mut subscriptions = Vec::with_capacity(topic_count.min(metadata_decoder.remaining()));
+    for _ in 0..topic_count {
+        subscriptions.push(metadata_decoder.string_bytes()?.to_vec());
+    }
+    let _ = metadata_decoder.bytes()?;
+    for _ in 1..protocols {
+        let _ = decoder.string_bytes()?;
+        let _ = decoder.bytes()?.ok_or(Error::Invalid)?;
+    }
+    Ok(RequestBody::JoinGroup {
+        group_id,
+        member_id,
+        subscriptions,
+    })
+}
+
+fn decode_sync_group(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    let group_id = decoder.string_bytes()?.to_vec();
+    let generation = decoder.i32()?;
+    let member_id = decoder.string_bytes()?.to_vec();
+    let assignments = decoder.array_len()?;
+    let mut assignment = Vec::new();
+    for _ in 0..assignments {
+        let _member = decoder.string_bytes()?;
+        let bytes = decoder.bytes()?.ok_or(Error::Invalid)?;
+        if assignment.is_empty() {
+            assignment = bytes.to_vec();
+        }
+    }
+    Ok(RequestBody::SyncGroup {
+        group_id,
+        generation,
+        member_id,
+        assignment,
+    })
+}
+
+fn decode_heartbeat(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    Ok(RequestBody::Heartbeat {
+        group_id: decoder.string_bytes()?.to_vec(),
+        generation: decoder.i32()?,
+        member_id: decoder.string_bytes()?.to_vec(),
+    })
+}
+
+fn decode_leave_group(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    Ok(RequestBody::LeaveGroup {
+        group_id: decoder.string_bytes()?.to_vec(),
+        member_id: decoder.string_bytes()?.to_vec(),
+    })
+}
+
+fn decode_offset_commit(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    let group_id = decoder.string_bytes()?.to_vec();
+    let generation = decoder.i32()?;
+    let member_id = decoder.string_bytes()?.to_vec();
+    let _retention = decoder.i64()?;
+    let topics = decoder.array_len()?;
+    if topics != 1 {
+        return Err(Error::Invalid);
+    }
+    let topic = decoder.string_bytes()?.to_vec();
+    let partitions = decoder.array_len()?;
+    if partitions != 1 {
+        return Err(Error::Invalid);
+    }
+    let partition = decoder.i32()?;
+    let offset = decoder.i64()?;
+    let _metadata = decoder.nullable_string_bytes()?;
+    Ok(RequestBody::OffsetCommit {
+        group_id,
+        generation,
+        member_id,
+        topic,
+        partition,
+        offset,
+    })
+}
+
+fn decode_offset_fetch(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
+    let group_id = decoder.string_bytes()?.to_vec();
+    let topics = decoder.array_len()?;
+    if topics != 1 {
+        return Err(Error::Invalid);
+    }
+    let topic = decoder.string_bytes()?.to_vec();
+    let partitions = decoder.array_len()?;
+    if partitions != 1 {
+        return Err(Error::Invalid);
+    }
+    Ok(RequestBody::OffsetFetch {
+        group_id,
+        topic,
+        partition: decoder.i32()?,
     })
 }
 
@@ -246,13 +499,16 @@ fn decode_produce(decoder: &mut Decoder<'_>) -> Result<RequestBody, Error> {
         for _ in 0..partition_count {
             let partition = decoder.i32()?;
             let record_set = decoder.bytes()?.ok_or(Error::Invalid)?;
-            let records = decode_record_batches(record_set)?;
+            let decoded = decode_record_batches_with_identity(record_set)?;
+            let records = decoded.records;
+            let producer = decoded.producer;
             if records.is_empty() {
                 return Err(Error::Invalid);
             }
             partitions.push(ProducePartition {
                 partition,
                 records,
+                producer,
             });
         }
         topics.push(ProduceTopic {

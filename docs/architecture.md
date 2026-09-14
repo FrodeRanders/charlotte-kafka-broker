@@ -86,6 +86,39 @@ Placement is deterministic: `shard = hash(topic) + partition (mod shard_count)`.
 It is a pure function of the topic name and partition index, so every caller
 routes to the owner without shared routing state.
 
+### Session ownership
+
+Connection protocol state is a separate ownership concern from partition data.
+The EL0 listener assigns each accepted connection a `SessionId` and a stable
+session shard using a bounded deterministic layout. The session shard is the
+owner of that session's decoder buffer and, as those features arrive, its
+producer epoch, consumer cursor, and transaction handle. A session shard may
+send commands to any partition shard; it never mutates a partition log owned by
+another shard. The current EL0 implementation uses one handler thread per
+connection and pins it to the assigned logical session shard, while the host
+front end uses one native thread per connection.
+
+Session affinity must not be confused with logical Kafka identity. A TCP
+connection is disposable; a reconnecting producer or transaction may retain a
+logical identity and must advance a fencing epoch. Consumer-group membership is
+owned by a coordinator keyed by `group_id`, and transaction state by a
+coordinator keyed by `transactional_id`; neither is inferred from the session
+shard. The coordinator is single-writer state hosted by shard zero and reached
+through typed mailbox commands. Producer epochs fence reconnecting instances,
+transactions require explicit partition enlistment, and group generations
+fence stale heartbeats and offset commits.
+
+This split preserves partition parallelism while making per-session ordering
+and backpressure explicit. A request involving several partitions crosses
+several bounded typed mailboxes and is completed by a session continuation.
+The current coordinator provides deterministic round-robin assignments and
+in-memory offsets. Transactional batches are tagged in the owning partition
+log; read-committed fetches hide pending and aborted batches, while committed
+batches retain their original offsets. Resolution is sent back to every
+enlisted partition through typed commands. The current resolution path is an
+in-memory single-process commit protocol; durable recovery and quorum-backed
+two-phase completion are still required before production failover.
+
 ## 4. Partition log semantics
 
 A `PartitionLog` is an ordered sequence of batches. Each batch is appended
@@ -94,7 +127,8 @@ watermark.
 
 - append: assigns monotonically increasing offsets and returns the base offset;
 - fetch: returns records from the requested offset, bounded by record count and
-  approximate byte count, plus the current high watermark;
+  approximate byte count, plus the current high watermark and last stable
+  offset. Read-committed fetches omit pending and aborted transaction batches;
 - list offsets: earliest is the retained start offset, latest is the high
   watermark;
 - out-of-range reads are an error, not an empty result;
@@ -105,9 +139,10 @@ watermark.
 - readers of records always receive owned copies; no reference into shard state
   escapes.
 
-Transactions, compaction, and timestamp indexes are out of scope for the first
-milestones. Fetch `isolation_level` is accepted and treated as read-uncommitted
-because no aborted-transaction state exists yet. Retention is an in-memory byte
+Compaction and timestamp indexes are out of scope for the first milestones.
+Transactional resolution is currently in-memory and coordinated through the
+runtime; Kafka wire transaction APIs and durable recovery remain future work.
+Retention is an in-memory byte
 budget only; durable segment deletion arrives with the storage milestone.
 
 ## 5. Wire subset
@@ -123,10 +158,23 @@ prefixed) and the response header followed by the correlation id. Flexible
 | Produce | 0 | 3 | record batch v2, one topic/partition per entry |
 | Fetch | 1 | 4 | high watermark, last stable offset, record batch v2 |
 | ListOffsets | 2 | 1 | earliest (-2) and latest (-1) |
+| FindCoordinator | 10 | 1 | returns this broker as the coordinator |
+| InitProducerId | 22 | 0 | allocates/fences transactional producer epochs |
+| AddPartitionsToTxn | 24 | 0 | enlists partitions for a producer transaction |
+| EndTxn | 26 | 0 | commits or aborts enlisted partitions |
+| JoinGroup | 11 | 1 | joins a deterministic consumer assignment |
+| SyncGroup | 14 | 0 | returns the leader-provided assignment |
+| Heartbeat | 12 | 0 | generation-fenced membership heartbeat |
+| LeaveGroup | 13 | 0 | removes a group member |
+| OffsetCommit | 8 | 2 | commits a generation-owned offset |
+| OffsetFetch | 9 | 1 | retrieves a committed group offset |
 
-The advertised ApiVersions response deliberately omits APIs that are not
-implemented, so a client that requires groups, transactions, or SASL fails at
-negotiation instead of receiving a guessed schema.
+The advertised ApiVersions response deliberately omits wire APIs that are not
+implemented. Coordinator discovery, producer identity allocation, partition
+enlistment, transactional produce, commit/abort, and the basic consumer-group
+lifecycle are available on the wire. Group assignment is deterministic and
+generation fenced; timeout-based eviction, cooperative rebalancing, and
+durable coordinator recovery remain future work.
 
 Record batches use magic 2 and CRC32C. Produce requests may carry several record
 batches in one partition entry; each decoded batch is appended as one atomic

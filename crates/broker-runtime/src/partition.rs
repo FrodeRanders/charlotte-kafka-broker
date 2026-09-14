@@ -14,8 +14,10 @@ use alloc::{
 use core::time::Duration;
 
 use broker_core::{
+    GroupCoordinator,
     PartitionLog,
     TopicCatalog,
+    TransactionCoordinator,
 };
 use sitas_core::{
     placement::ShardPlacement,
@@ -30,6 +32,8 @@ use sitas_core::{
 };
 
 use crate::message::{
+    CoordinationRequest,
+    CoordinationResult,
     PartitionCommand,
     PartitionResult,
 };
@@ -65,6 +69,8 @@ async fn partition_task(
     partition_max_bytes: Option<usize>,
 ) {
     let mut logs: BTreeMap<(Vec<u8>, i32), PartitionLog> = BTreeMap::new();
+    let mut transactions = TransactionCoordinator::new();
+    let mut groups = GroupCoordinator::new();
 
     while let Some(command) = receiver.recv().await {
         match command {
@@ -89,12 +95,11 @@ async fn partition_task(
                 };
                 respond(&reply, parker.as_ref(), result);
             }
-            PartitionCommand::Fetch {
+            PartitionCommand::ProduceTransactional {
                 topic,
                 partition,
-                offset,
-                max_records,
-                max_bytes,
+                records,
+                producer_id,
                 reply,
             } => {
                 let result = if let Err(error) = catalog.check_partition(&topic, partition) {
@@ -103,7 +108,31 @@ async fn partition_task(
                     let log = logs
                         .entry((topic, partition))
                         .or_insert_with(|| new_log(partition_max_bytes));
-                    match log.fetch(offset, max_records, max_bytes) {
+                    match log.append_transactional(&records, producer_id) {
+                        Ok(base_offset) => PartitionResult::Produced {
+                            base_offset,
+                        },
+                        Err(error) => PartitionResult::Failed(error),
+                    }
+                };
+                respond(&reply, parker.as_ref(), result);
+            }
+            PartitionCommand::Fetch {
+                topic,
+                partition,
+                offset,
+                max_records,
+                max_bytes,
+                read_committed,
+                reply,
+            } => {
+                let result = if let Err(error) = catalog.check_partition(&topic, partition) {
+                    PartitionResult::Failed(error)
+                } else {
+                    let log = logs
+                        .entry((topic, partition))
+                        .or_insert_with(|| new_log(partition_max_bytes));
+                    match log.fetch_with_isolation(offset, max_records, max_bytes, read_committed) {
                         Ok(window) => PartitionResult::Fetched(window),
                         Err(error) => PartitionResult::Failed(error),
                     }
@@ -132,7 +161,107 @@ async fn partition_task(
                 respond(&reply, parker.as_ref(), PartitionResult::Stopped);
                 return;
             }
+            PartitionCommand::Coordinate {
+                request,
+                reply,
+            } => {
+                let result = coordinate(request, &mut transactions, &mut groups);
+                respond(&reply, parker.as_ref(), PartitionResult::Coordination(result));
+            }
+            PartitionCommand::ResolveTransaction {
+                producer_id,
+                commit,
+                reply,
+            } => {
+                for log in logs.values_mut() {
+                    log.commit_transaction(producer_id, commit);
+                }
+                respond(&reply, parker.as_ref(), PartitionResult::Resolved);
+            }
         }
+    }
+}
+
+fn coordinate(
+    request: CoordinationRequest,
+    transactions: &mut TransactionCoordinator,
+    groups: &mut GroupCoordinator,
+) -> Result<CoordinationResult, broker_core::CoordinationError> {
+    match request {
+        CoordinationRequest::InitProducer {
+            transactional_id,
+        } => transactions.init(&transactional_id).map(CoordinationResult::Producer),
+        CoordinationRequest::AddPartition {
+            transactional_id,
+            producer,
+            topic,
+            partition,
+        } => transactions
+            .add_partition(&transactional_id, producer, &topic, partition)
+            .map(|_| CoordinationResult::Applied),
+        CoordinationRequest::ValidateProduce {
+            transactional_id,
+            producer,
+            topic,
+            partition,
+        } => transactions
+            .validate_produce(&transactional_id, producer, &topic, partition)
+            .map(|_| CoordinationResult::Applied),
+        CoordinationRequest::EndTransaction {
+            transactional_id,
+            producer,
+            commit,
+        } => transactions
+            .end(&transactional_id, producer, commit)
+            .map(CoordinationResult::TransactionCompleted),
+        CoordinationRequest::AddOffset {
+            transactional_id,
+            producer,
+            offset,
+        } => transactions
+            .add_offset(&transactional_id, producer, offset)
+            .map(|_| CoordinationResult::Applied),
+        CoordinationRequest::JoinGroup {
+            group_id,
+            member_id,
+            subscriptions,
+            partitions,
+        } => groups.join(&group_id, &member_id, subscriptions, &partitions).map(
+            |(generation, assignments)| CoordinationResult::Group {
+                generation,
+                assignments,
+            },
+        ),
+        CoordinationRequest::Heartbeat {
+            group_id,
+            member_id,
+            generation,
+        } => {
+            groups.heartbeat(&group_id, &member_id, generation).map(|_| CoordinationResult::Applied)
+        }
+        CoordinationRequest::LeaveGroup {
+            group_id,
+            member_id,
+            generation,
+        } => groups.leave(&group_id, &member_id, generation).map(|_| CoordinationResult::Applied),
+        CoordinationRequest::LeaveGroupAny {
+            group_id,
+            member_id,
+        } => groups.leave_any(&group_id, &member_id).map(|_| CoordinationResult::Applied),
+        CoordinationRequest::CommitOffset {
+            group_id,
+            generation,
+            topic,
+            partition,
+            offset,
+        } => groups
+            .commit_offset(&group_id, generation, &topic, partition, offset)
+            .map(|_| CoordinationResult::Applied),
+        CoordinationRequest::FetchOffset {
+            group_id,
+            topic,
+            partition,
+        } => groups.offset(&group_id, &topic, partition).map(CoordinationResult::Offset),
     }
 }
 

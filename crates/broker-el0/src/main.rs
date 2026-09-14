@@ -20,6 +20,10 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use core::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
 
 use broker_engine::{
     BrokerIdentity,
@@ -29,6 +33,8 @@ use broker_engine::{
 use broker_runtime::{
     Broker,
     BrokerConfig,
+    SessionId,
+    SessionShardLayout,
     TopicSpec,
 };
 use catten_rt::{
@@ -54,19 +60,119 @@ use charlotte_launch::deployment;
 use sitas_charlotte::CharlotteReactor;
 use sitas_core::{
     placement::ShardPlacement,
-    shard::ShardId,
     shard_runtime::ShardRuntime,
 };
 
 const SHARD_COUNT: usize = 2;
+/// Logical protocol-state shards. They may share LPs with partition shards;
+/// partition ownership remains independent and is still selected per
+/// `(topic, partition)` by `broker-runtime`.
+const SESSION_SHARD_COUNT: usize = 2;
 const LISTEN_PORT: u16 = 9092;
 const ACCEPT_POLL_MS: u64 = 25;
 const MAX_FRAME_LEN: usize = 1024 * 1024;
 const TOPIC: &[u8] = b"events";
 const PARTITIONS: i32 = 4;
 const PARTITION_MAX_BYTES: usize = 64 * 1024;
+const HEARTBEAT_POLLS: u64 = 400;
 const INTERFACE: u64 = catten_services::name(b"KBRK");
 const VERSION: u32 = 1;
+
+const STAGE_ACCEPTED: u64 = 1;
+const STAGE_RECEIVED: u64 = 2;
+const STAGE_DISPATCHING: u64 = 3;
+const STAGE_HANDLED: u64 = 4;
+const STAGE_SENDING: u64 = 5;
+const STAGE_SENT: u64 = 6;
+const STAGE_RECEIVE_ERROR: u64 = 7;
+const STAGE_ENGINE_ERROR: u64 = 8;
+const STAGE_SEND_ERROR: u64 = 9;
+const STAGE_CLOSED: u64 = 10;
+
+#[derive(Default)]
+struct Diagnostics {
+    next_connection: AtomicU64,
+    accepted: AtomicU64,
+    active: AtomicU64,
+    chunks: AtomicU64,
+    frames: AtomicU64,
+    handled: AtomicU64,
+    sent: AtomicU64,
+    receive_errors: AtomicU64,
+    engine_errors: AtomicU64,
+    send_errors: AtomicU64,
+    progress: AtomicU64,
+    last_connection: AtomicU64,
+    last_stage: AtomicU64,
+    last_api_key: AtomicU64,
+    last_api_version: AtomicU64,
+    last_correlation: AtomicU64,
+}
+
+impl Diagnostics {
+    fn accepted(&self) -> u64 {
+        let connection = self.next_connection.fetch_add(1, Ordering::Relaxed) + 1;
+        self.accepted.fetch_add(1, Ordering::Relaxed);
+        self.active.fetch_add(1, Ordering::Relaxed);
+        self.mark(connection, STAGE_ACCEPTED);
+        connection
+    }
+
+    fn mark(&self, connection: u64, stage: u64) {
+        self.last_connection.store(connection, Ordering::Relaxed);
+        self.last_stage.store(stage, Ordering::Relaxed);
+        self.progress.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn mark_frame(&self, connection: u64, frame: &[u8]) {
+        if frame.len() >= 12 {
+            self.last_api_key
+                .store(u16::from_be_bytes([frame[4], frame[5]]).into(), Ordering::Relaxed);
+            self.last_api_version
+                .store(u16::from_be_bytes([frame[6], frame[7]]).into(), Ordering::Relaxed);
+            self.last_correlation.store(
+                u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]).into(),
+                Ordering::Relaxed,
+            );
+        }
+        self.mark(connection, STAGE_DISPATCHING);
+    }
+
+    fn heartbeat(&self) {
+        logln!(
+            "[broker] hb accepted={} active={} chunks={} frames={} handled={} sent={} \
+             errors={}/{}/{} progress={} last={}:{} api={}/{} corr={}",
+            self.accepted.load(Ordering::Relaxed),
+            self.active.load(Ordering::Relaxed),
+            self.chunks.load(Ordering::Relaxed),
+            self.frames.load(Ordering::Relaxed),
+            self.handled.load(Ordering::Relaxed),
+            self.sent.load(Ordering::Relaxed),
+            self.receive_errors.load(Ordering::Relaxed),
+            self.engine_errors.load(Ordering::Relaxed),
+            self.send_errors.load(Ordering::Relaxed),
+            self.progress.load(Ordering::Relaxed),
+            self.last_connection.load(Ordering::Relaxed),
+            self.last_stage.load(Ordering::Relaxed),
+            self.last_api_key.load(Ordering::Relaxed),
+            self.last_api_version.load(Ordering::Relaxed),
+            self.last_correlation.load(Ordering::Relaxed),
+        );
+    }
+}
+
+struct ActiveConnection<'a> {
+    diagnostics: &'a Diagnostics,
+    connection: u64,
+}
+
+impl Drop for ActiveConnection<'_> {
+    fn drop(&mut self) {
+        self.diagnostics.active.fetch_sub(1, Ordering::Relaxed);
+        self.diagnostics.mark(self.connection, STAGE_CLOSED);
+        logln!("[broker] connection {} closed", self.connection);
+    }
+}
 
 /// Address reported in metadata. `BROKER_ADVERTISE_HOST`/`BROKER_ADVERTISE_PORT`
 /// override it at build time so a broker behind a host forward can advertise
@@ -124,7 +230,10 @@ fn serve(ctx: &Context) -> ShutdownRequest {
         broker,
         EngineConfig::new(BrokerIdentity::new(0, ADVERTISE_HOST, ADVERTISE_PORT)),
     ));
+    let diagnostics = Arc::new(Diagnostics::default());
+    let session_layout = SessionShardLayout::new(0, SESSION_SHARD_COUNT);
     logln!("[broker] {} partition shards started", SHARD_COUNT);
+    logln!("[broker] {} logical session shards available", session_layout.shard_count());
 
     let bootstrap = ctx.bootstrap_connection().unwrap_or_else(|| domain_abort());
     let endpoint = Endpoint::create(INTERFACE, VERSION, 4).unwrap_or_else(|_| domain_abort());
@@ -165,7 +274,7 @@ fn serve(ctx: &Context) -> ShutdownRequest {
     let tcp: &'static Connection = Box::leak(Box::new(tcp));
 
     logln!("[broker] serving kafka on tcp port {}", LISTEN_PORT);
-    accept_loop(ctx, &reactor, &engine, tcp, &endpoint)
+    accept_loop(ctx, &reactor, &engine, &diagnostics, tcp, &endpoint, session_layout)
 }
 
 fn descriptor_name(descriptor: &LaunchMemoryRef<'_>) -> Vec<u8> {
@@ -178,9 +287,12 @@ fn accept_loop(
     ctx: &Context,
     reactor: &CharlotteReactor,
     engine: &Arc<Engine>,
+    diagnostics: &Arc<Diagnostics>,
     tcp: &'static Connection,
     _readiness: &Endpoint,
+    session_layout: SessionShardLayout,
 ) -> ShutdownRequest {
+    let mut heartbeat_polls = 0u64;
     loop {
         if let Some(request) = ctx.lifecycle().shutdown_requested() {
             return request;
@@ -214,15 +326,26 @@ fn accept_loop(
                 domain_abort();
             }
             sleep_ms(ACCEPT_POLL_MS);
+            heartbeat_polls += 1;
+            if heartbeat_polls == HEARTBEAT_POLLS {
+                diagnostics.heartbeat();
+                heartbeat_polls = 0;
+            }
         }
 
+        let connection = diagnostics.accepted();
+        let session_id = SessionId::new(connection);
+        let session_shard = session_layout.shard_for(session_id);
+        logln!("[broker] accepted connection {}", connection);
+        logln!("[broker] session {} assigned to shard {}", session_id.get(), session_shard.0);
         let engine = Arc::clone(engine);
+        let diagnostics = Arc::clone(diagnostics);
         let ctx = *ctx;
         let _ = reactor.spawn_shard(
-            ShardId(0),
+            session_shard,
             ShardPlacement::Sequential,
             Box::new(move || {
-                let _ = serve_connection(&ctx, &engine, listener);
+                let _ = serve_connection(&ctx, &engine, &diagnostics, connection, listener);
             }),
         );
     }
@@ -244,8 +367,14 @@ fn listen(tcp: &Connection, listener: &OwnedSocket<'_>) -> i64 {
 fn serve_connection(
     ctx: &Context,
     engine: &Engine,
+    diagnostics: &Diagnostics,
+    connection: u64,
     socket: OwnedSocket<'_>,
 ) -> Option<ShutdownRequest> {
+    let _active = ActiveConnection {
+        diagnostics,
+        connection,
+    };
     let mut buffer: Vec<u8> = Vec::new();
     loop {
         if let Some(request) = ctx.lifecycle().shutdown_requested() {
@@ -254,6 +383,8 @@ fn serve_connection(
 
         match socket.receive_timeout(1, ACCEPT_POLL_MS) {
             Ok(Some(chunk)) => {
+                diagnostics.chunks.fetch_add(1, Ordering::Relaxed);
+                diagnostics.mark(connection, STAGE_RECEIVED);
                 let (memory, len) = chunk.into_parts();
                 if let Ok(mapping) = memory.map_read_only() {
                     buffer.extend_from_slice(&mapping.as_slice()[..len]);
@@ -261,7 +392,11 @@ fn serve_connection(
             }
             Ok(None) => return None,
             Err(socket::SocketError::RetryExhausted) => continue,
-            Err(_) => return None,
+            Err(_) => {
+                diagnostics.receive_errors.fetch_add(1, Ordering::Relaxed);
+                diagnostics.mark(connection, STAGE_RECEIVE_ERROR);
+                return None;
+            }
         }
 
         while buffer.len() >= 4 {
@@ -274,13 +409,26 @@ fn serve_connection(
                 break;
             }
             let frame: Vec<u8> = buffer.drain(..total).collect();
+            diagnostics.frames.fetch_add(1, Ordering::Relaxed);
+            diagnostics.mark_frame(connection, &frame);
             match engine.handle_frame(&frame) {
                 Ok(response) => {
+                    diagnostics.handled.fetch_add(1, Ordering::Relaxed);
+                    diagnostics.mark(connection, STAGE_HANDLED);
+                    diagnostics.mark(connection, STAGE_SENDING);
                     if socket.send_all(&response, 1200, ACCEPT_POLL_MS).is_err() {
+                        diagnostics.send_errors.fetch_add(1, Ordering::Relaxed);
+                        diagnostics.mark(connection, STAGE_SEND_ERROR);
                         return None;
                     }
+                    diagnostics.sent.fetch_add(1, Ordering::Relaxed);
+                    diagnostics.mark(connection, STAGE_SENT);
                 }
-                Err(_) => return None,
+                Err(_) => {
+                    diagnostics.engine_errors.fetch_add(1, Ordering::Relaxed);
+                    diagnostics.mark(connection, STAGE_ENGINE_ERROR);
+                    return None;
+                }
             }
         }
     }

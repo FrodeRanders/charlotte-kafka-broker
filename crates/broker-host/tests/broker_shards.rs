@@ -12,7 +12,9 @@ use broker_runtime::{
     Broker,
     BrokerConfig,
     BrokerError,
+    CoordinationError,
     TopicSpec,
+    TransactionOffset,
 };
 use sitas_unix::UnixRuntime;
 
@@ -22,6 +24,85 @@ fn record(value: &[u8]) -> RecordData {
         key: None,
         value: Some(Vec::from(value)),
     }
+}
+
+#[test]
+fn transactions_and_groups_are_fenced_by_owned_coordinator() {
+    let runtime = UnixRuntime::new();
+    let broker = Broker::start(&runtime, events_config(2, 2)).expect("start broker");
+
+    let producer = broker.init_producer(b"orders").expect("init producer");
+    broker.add_transaction_partition(b"orders", producer, b"events", 0).expect("enlist partition");
+    broker
+        .validate_transactional_produce(b"orders", producer, b"events", 0)
+        .expect("validate produce");
+    assert_eq!(
+        broker.produce_transactional(b"orders", producer, b"events", 0, vec![record(b"tx")]),
+        Ok(0)
+    );
+    assert_eq!(
+        broker.validate_transactional_produce(b"orders", producer, b"events", 1),
+        Err(BrokerError::Coordination(CoordinationError::InvalidTransactionState))
+    );
+    broker.end_transaction(b"orders", producer, true).expect("commit");
+    let committed =
+        broker.fetch_with_isolation(b"events", 0, 0, 10, 4096, true).expect("read committed");
+    assert_eq!(committed.records.len(), 1);
+
+    let producer = broker.init_producer(b"orders").expect("new epoch");
+    broker.add_transaction_partition(b"orders", producer, b"events", 0).expect("enlist second");
+    broker
+        .produce_transactional(b"orders", producer, b"events", 0, vec![record(b"abort")])
+        .expect("append second");
+    assert_eq!(
+        broker
+            .fetch_with_isolation(b"events", 0, 0, 10, 4096, true)
+            .expect("pending hidden")
+            .records
+            .len(),
+        1
+    );
+    broker.end_transaction(b"orders", producer, false).expect("abort");
+
+    let (generation, assignments) =
+        broker.join_group(b"workers", b"member-a", vec![b"events".to_vec()]).expect("join group");
+    assert_eq!(assignments[0].partitions.len(), 2);
+    broker.commit_group_offset(b"workers", generation, b"events", 0, 1).expect("commit offset");
+    assert_eq!(broker.group_offset(b"workers", b"events", 0), Ok(Some(1)));
+    let producer = broker.init_producer(b"read-process-write").expect("init offset producer");
+    broker
+        .add_transaction_partition(b"read-process-write", producer, b"events", 1)
+        .expect("enlist output");
+    broker
+        .add_transaction_offset(
+            b"read-process-write",
+            producer,
+            TransactionOffset {
+                group_id: b"workers".to_vec(),
+                generation,
+                topic: b"events".to_vec(),
+                partition: 0,
+                offset: 2,
+            },
+        )
+        .expect("enlist offset");
+    broker
+        .produce_transactional(
+            b"read-process-write",
+            producer,
+            b"events",
+            1,
+            vec![record(b"result")],
+        )
+        .expect("produce result");
+    broker
+        .end_transaction(b"read-process-write", producer, true)
+        .expect("commit output and offset");
+    assert_eq!(broker.group_offset(b"workers", b"events", 0), Ok(Some(2)));
+    assert_eq!(
+        broker.heartbeat_group(b"workers", b"member-a", generation - 1),
+        Err(BrokerError::Coordination(CoordinationError::IllegalGeneration))
+    );
 }
 
 fn events_config(shard_count: usize, partitions: i32) -> BrokerConfig {

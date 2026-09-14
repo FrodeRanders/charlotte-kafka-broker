@@ -112,6 +112,20 @@ fn record_batch(value: &[u8]) -> Vec<u8> {
     .expect("record batch")
 }
 
+fn transactional_record_batch(value: &[u8], producer: client::ProducerIdentity) -> Vec<u8> {
+    client::encode_record_batch(
+        &[client::RecordInput {
+            timestamp_ms: 1_000,
+            key: Some(b"k"),
+            value: Some(value),
+        }],
+        producer,
+        -1,
+        true,
+    )
+    .expect("transactional record batch")
+}
+
 #[test]
 fn api_versions_conforms_to_the_client_codec() {
     let mut harness = harness();
@@ -127,7 +141,38 @@ fn api_versions_conforms_to_the_client_codec() {
     ] {
         assert!(parsed.supports(api_key, version), "api {api_key} v{version} not advertised");
     }
-    assert!(!parsed.supports(client::api::JOIN_GROUP, client::version::JOIN_GROUP));
+    assert!(parsed.supports(client::api::JOIN_GROUP, client::version::JOIN_GROUP));
+    assert!(parsed.supports(client::api::SYNC_GROUP, client::version::SYNC_GROUP));
+    assert!(parsed.supports(client::api::HEARTBEAT, client::version::HEARTBEAT));
+    assert!(parsed.supports(client::api::LEAVE_GROUP, client::version::LEAVE_GROUP));
+    assert!(parsed.supports(client::api::OFFSET_COMMIT, client::version::OFFSET_COMMIT));
+    assert!(parsed.supports(client::api::OFFSET_FETCH, client::version::OFFSET_FETCH));
+    assert!(parsed.supports(client::api::FIND_COORDINATOR, client::version::FIND_COORDINATOR));
+    assert!(parsed.supports(client::api::INIT_PRODUCER_ID, client::version::INIT_PRODUCER_ID));
+    assert!(
+        parsed.supports(client::api::ADD_PARTITIONS_TO_TXN, client::version::ADD_PARTITIONS_TO_TXN)
+    );
+    assert!(parsed.supports(client::api::END_TXN, client::version::END_TXN));
+}
+
+#[test]
+fn coordinator_and_transaction_identity_conform_to_client_codec() {
+    let mut harness = harness();
+    let request = client::find_coordinator_request(20, b"conformance", b"orders", true)
+        .expect("find coordinator request");
+    let response = harness.round_trip(&request);
+    let coordinator = client::parse_find_coordinator(&response, 20).expect("parse coordinator");
+    assert_eq!(coordinator.error, client::NO_ERROR);
+    assert_eq!(coordinator.node_id, 1);
+    assert_eq!(coordinator.host, "127.0.0.1");
+    assert_eq!(coordinator.port, 9092);
+
+    let request = client::init_producer_id_request(21, b"conformance", Some(b"orders"), 30_000)
+        .expect("init producer request");
+    let response = harness.round_trip(&request);
+    let producer = client::parse_init_producer_id(&response, 21).expect("parse producer");
+    assert!(producer.producer_id > 0);
+    assert_eq!(producer.producer_epoch, 0);
 }
 
 #[test]
@@ -245,6 +290,105 @@ fn transactional_produce_is_rejected() {
     let response = harness.round_trip(&request);
     let produced = client::parse_produce(&response, 1, EVENTS, 0).expect("parse");
     assert_eq!(produced.error, UNSUPPORTED_VERSION);
+}
+
+#[test]
+fn transactional_lifecycle_conforms_to_client_codec() {
+    let mut harness = harness();
+    let init = client::init_producer_id_request(30, b"conformance", Some(b"txn"), 30_000)
+        .expect("init request");
+    let identity =
+        client::parse_init_producer_id(&harness.round_trip(&init), 30).expect("init response");
+    let enlist =
+        client::add_partitions_to_txn_request(31, b"conformance", b"txn", identity, EVENTS, 0)
+            .expect("enlist request");
+    assert!(client::parse_partition_error(&harness.round_trip(&enlist), 31, EVENTS, 0).is_ok());
+    let batch = transactional_record_batch(b"transactional", identity);
+    let produce =
+        client::produce_request(32, b"conformance", Some(b"txn"), EVENTS, 0, &batch, 30_000)
+            .expect("produce request");
+    assert_eq!(
+        client::parse_produce(&harness.round_trip(&produce), 32, EVENTS, 0)
+            .expect("produce response")
+            .error,
+        client::NO_ERROR
+    );
+    let end =
+        client::end_txn_request(33, b"conformance", b"txn", identity, true).expect("end request");
+    assert!(client::parse_top_level_error(&harness.round_trip(&end), 33).is_ok());
+}
+
+#[test]
+fn consumer_group_lifecycle_conforms_to_client_codec() {
+    let mut harness = harness();
+    let subscription = client::fixed_subscription(EVENTS, 0).expect("subscription");
+    let join = client::join_group_request(
+        40,
+        b"conformance",
+        b"workers",
+        10_000,
+        10_000,
+        b"",
+        &subscription,
+    )
+    .expect("join request");
+    let joined = client::parse_join_group(&harness.round_trip(&join), 40).expect("join response");
+    assert_eq!(joined.error, client::NO_ERROR);
+    let assignment = client::fixed_assignment(EVENTS, Some(0)).expect("assignment");
+    let sync = client::sync_group_request(
+        41,
+        b"conformance",
+        b"workers",
+        joined.generation,
+        &joined.member_id,
+        &[client::GroupAssignment {
+            member_id: joined.member_id.clone(),
+            assignment,
+        }],
+    )
+    .expect("sync request");
+    let (error, _) =
+        client::parse_sync_group(&harness.round_trip(&sync), 41).expect("sync response");
+    assert_eq!(error, client::NO_ERROR);
+    let heartbeat = client::heartbeat_request(
+        42,
+        b"conformance",
+        b"workers",
+        joined.generation,
+        &joined.member_id,
+    )
+    .expect("heartbeat request");
+    assert_eq!(
+        client::parse_group_error(&harness.round_trip(&heartbeat), 42).expect("heartbeat response"),
+        client::NO_ERROR
+    );
+    let commit = client::offset_commit_request(
+        43,
+        b"conformance",
+        client::OffsetCommit {
+            group_id: b"workers",
+            generation: joined.generation,
+            member_id: &joined.member_id,
+            topic: EVENTS,
+            partition: 0,
+            next_offset: 7,
+        },
+    )
+    .expect("offset commit request");
+    assert!(client::parse_offset_commit(&harness.round_trip(&commit), 43, EVENTS, 0).is_ok());
+    let fetch = client::offset_fetch_request(44, b"conformance", b"workers", EVENTS, 0)
+        .expect("offset fetch request");
+    assert_eq!(
+        client::parse_offset_fetch(&harness.round_trip(&fetch), 44, EVENTS, 0)
+            .expect("offset fetch response"),
+        Some(7)
+    );
+    let leave = client::leave_group_request(45, b"conformance", b"workers", &joined.member_id)
+        .expect("leave request");
+    assert_eq!(
+        client::parse_group_error(&harness.round_trip(&leave), 45).expect("leave response"),
+        client::NO_ERROR
+    );
 }
 
 #[test]
