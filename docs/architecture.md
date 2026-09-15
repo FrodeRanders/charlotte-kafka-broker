@@ -96,7 +96,12 @@ producer epoch, consumer cursor, and transaction handle. A session shard may
 send commands to any partition shard; it never mutates a partition log owned by
 another shard. The current EL0 implementation uses one handler thread per
 connection and pins it to the assigned logical session shard, while the host
-front end uses one native thread per connection.
+front end uses one native thread per connection. Deployments must budget enough
+threads for the partition shards and expected concurrent sessions; the soak
+runner uses the platform maximum of 64. Socket admission is also bounded by
+the shared tcpip service. A temporary socket or thread shortage is logged and
+retried at the EL0 accept boundary rather than treated as a broker-fatal
+protocol error.
 
 Session affinity must not be confused with logical Kafka identity. A TCP
 connection is disposable; a reconnecting producer or transaction may retain a

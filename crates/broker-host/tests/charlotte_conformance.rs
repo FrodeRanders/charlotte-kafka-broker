@@ -227,6 +227,23 @@ fn produce_and_fetch_conform_to_the_client_codec() {
     assert_eq!(fetched.records.len(), 1);
     assert_eq!(fetched.records[0].key.as_deref(), Some(b"k".as_slice()));
     assert_eq!(fetched.records[0].value.as_deref(), Some(b"first".as_slice()));
+
+    // A caught-up consumer fetches at the high watermark and must receive an
+    // empty record set, not a null one: null record sets break kafka-python.
+    let fetch = client::Fetch {
+        topic: EVENTS,
+        partition: 0,
+        offset: 1,
+        max_wait_ms: 0,
+        max_bytes: 65_536,
+        read_committed: true,
+    };
+    let request = client::fetch_request(3, b"conformance", fetch).expect("request");
+    let response = harness.round_trip(&request);
+    let fetched = client::parse_fetch(&response, 3, EVENTS, 0).expect("parse");
+    assert_eq!(fetched.error, client::NO_ERROR);
+    assert_eq!(fetched.high_watermark, 1);
+    assert!(fetched.records.is_empty());
 }
 
 #[test]

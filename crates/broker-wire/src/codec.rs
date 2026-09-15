@@ -73,16 +73,6 @@ impl Encoder {
         Ok(())
     }
 
-    pub(crate) fn nullable_bytes(&mut self, value: Option<&[u8]>) -> Result<(), Error> {
-        match value {
-            Some(value) => self.bytes(value),
-            None => {
-                self.i32(-1);
-                Ok(())
-            }
-        }
-    }
-
     pub(crate) fn array_len(&mut self, len: usize) -> Result<(), Error> {
         if len > MAX_ARRAY_LEN || len > i32::MAX as usize {
             return Err(Error::TooLarge);

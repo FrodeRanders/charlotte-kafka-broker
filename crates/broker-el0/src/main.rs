@@ -70,6 +70,7 @@ const SHARD_COUNT: usize = 2;
 const SESSION_SHARD_COUNT: usize = 2;
 const LISTEN_PORT: u16 = 9092;
 const ACCEPT_POLL_MS: u64 = 25;
+const ACCEPT_RETRY_MAX_MS: u64 = 1_000;
 const MAX_FRAME_LEN: usize = 1024 * 1024;
 const TOPIC: &[u8] = b"events";
 const PARTITIONS: i32 = 4;
@@ -293,37 +294,79 @@ fn accept_loop(
     session_layout: SessionShardLayout,
 ) -> ShutdownRequest {
     let mut heartbeat_polls = 0u64;
+    let mut retry_failures = 0u32;
     loop {
         if let Some(request) = ctx.lifecycle().shutdown_requested() {
             return request;
         }
 
-        let listener =
-            OwnedSocket::open(tcp.as_ref(), socket::DOMAIN_TCP).unwrap_or_else(|_| domain_abort());
+        let listener = match OwnedSocket::open(tcp.as_ref(), socket::DOMAIN_TCP) {
+            Ok(listener) => listener,
+            Err(error) => {
+                retry_failures = retry_failures.saturating_add(1);
+                if retry_failures <= 3 || retry_failures.is_power_of_two() {
+                    logln!(
+                        "[broker] socket admission failed (attempt {}): {:?}; retrying",
+                        retry_failures,
+                        error
+                    );
+                }
+                sleep_ms(accept_retry_delay_ms(retry_failures));
+                continue;
+            }
+        };
         let listen_result = listen(tcp, &listener);
         if listen_result != 0 {
-            logln!("[broker] listen on port {} failed ({})", LISTEN_PORT, listen_result);
-            sleep_ms(ACCEPT_POLL_MS);
+            retry_failures = retry_failures.saturating_add(1);
+            if retry_failures <= 3 || retry_failures.is_power_of_two() {
+                logln!(
+                    "[broker] listen on port {} failed (attempt {}, {}); retrying",
+                    LISTEN_PORT,
+                    retry_failures,
+                    listen_result
+                );
+            }
+            sleep_ms(accept_retry_delay_ms(retry_failures));
             continue;
         }
+        retry_failures = 0;
         logln!("[broker] listening on tcp port {}", LISTEN_PORT);
 
-        loop {
+        let accepted = loop {
             if let Some(request) = ctx.lifecycle().shutdown_requested() {
                 return request;
             }
-            let result = listener
+            let result = match listener
                 .call(socket::OP_ACCEPT, listener.id())
-                .unwrap_or_else(|_| domain_abort())
-                .wait()
-                .unwrap_or_else(|_| domain_abort())
-                .result;
+                .and_then(|call| call.wait())
+            {
+                Ok(result) => result.result,
+                Err(error) => {
+                    retry_failures = retry_failures.saturating_add(1);
+                    if retry_failures <= 3 || retry_failures.is_power_of_two() {
+                        logln!(
+                            "[broker] accept request failed (attempt {}): {:?}; recreating \
+                             listener",
+                            retry_failures,
+                            error
+                        );
+                    }
+                    break false;
+                }
+            };
             if result == 0 {
-                break;
+                break true;
             }
             if result != socket::ERR_WOULD_BLOCK {
-                logln!("[broker] accept failed with {}", result);
-                domain_abort();
+                retry_failures = retry_failures.saturating_add(1);
+                if retry_failures <= 3 || retry_failures.is_power_of_two() {
+                    logln!(
+                        "[broker] accept failed (attempt {}) with {}; recreating listener",
+                        retry_failures,
+                        result
+                    );
+                }
+                break false;
             }
             sleep_ms(ACCEPT_POLL_MS);
             heartbeat_polls += 1;
@@ -331,7 +374,17 @@ fn accept_loop(
                 diagnostics.heartbeat();
                 heartbeat_polls = 0;
             }
+        };
+
+        // A failed accept request (or a closed listener) is not an accepted
+        // session. Restart the outer loop without manufacturing a connection
+        // id or handing the listening socket to a session worker.
+        if !accepted {
+            sleep_ms(accept_retry_delay_ms(retry_failures));
+            continue;
         }
+
+        retry_failures = 0;
 
         let connection = diagnostics.accepted();
         let session_id = SessionId::new(connection);
@@ -341,6 +394,7 @@ fn accept_loop(
         let engine = Arc::clone(engine);
         let diagnostics = Arc::clone(diagnostics);
         let ctx = *ctx;
+        logln!("[broker] spawning session {} on shard {}", session_id.get(), session_shard.0);
         let _ = reactor.spawn_shard(
             session_shard,
             ShardPlacement::Sequential,
@@ -348,7 +402,13 @@ fn accept_loop(
                 let _ = serve_connection(&ctx, &engine, &diagnostics, connection, listener);
             }),
         );
+        logln!("[broker] session {} shard started", session_id.get());
     }
+}
+
+fn accept_retry_delay_ms(failures: u32) -> u64 {
+    let shift = failures.saturating_sub(1).min(6);
+    (ACCEPT_POLL_MS << shift).min(ACCEPT_RETRY_MAX_MS)
 }
 
 fn listen(tcp: &Connection, listener: &OwnedSocket<'_>) -> i64 {

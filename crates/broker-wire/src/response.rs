@@ -420,7 +420,7 @@ pub fn encode_fetch(correlation_id: i32, response: &FetchResponse) -> Result<Vec
                 None => encoder.nullable_array_len(None)?,
             }
             if partition.records.is_empty() {
-                encoder.nullable_bytes(None)?;
+                encoder.bytes(&[])?;
             } else {
                 let base_offset = partition.records[0].offset;
                 let batch = encode_record_batch(base_offset, &partition.records)?;
@@ -607,6 +607,37 @@ mod tests {
             decode_record_batches(set).expect("decode"),
             records.into_iter().map(Into::into).collect::<Vec<_>>()
         );
+        assert!(body.done());
+    }
+
+    #[test]
+    fn fetch_response_encodes_an_empty_record_set_for_a_caught_up_consumer() {
+        let response = FetchResponse {
+            throttle_time_ms: 0,
+            topics: vec![FetchTopicResult {
+                name: b"events".to_vec(),
+                partitions: vec![FetchPartitionResult {
+                    partition: 0,
+                    error: NO_ERROR,
+                    high_watermark: 4,
+                    last_stable_offset: 4,
+                    aborted_transactions: None,
+                    records: Vec::new(),
+                }],
+            }],
+        };
+        let frame = encode_fetch(5, &response).expect("encode");
+        let mut body = response_body(&frame, 5);
+        assert_eq!(body.i32(), Ok(0));
+        assert_eq!(body.array_len(), Ok(1));
+        assert_eq!(body.string_bytes(), Ok(b"events".as_slice()));
+        assert_eq!(body.array_len(), Ok(1));
+        assert_eq!(body.i32(), Ok(0));
+        assert_eq!(body.i16(), Ok(NO_ERROR));
+        assert_eq!(body.i64(), Ok(4));
+        assert_eq!(body.i64(), Ok(4));
+        assert_eq!(body.nullable_array_len(), Ok(None));
+        assert_eq!(body.bytes(), Ok(Some(&[] as &[u8])));
         assert!(body.done());
     }
 

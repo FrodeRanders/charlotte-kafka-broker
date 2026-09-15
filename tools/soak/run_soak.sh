@@ -17,7 +17,14 @@
 #
 # Usage:
 #   tools/soak/run_soak.sh --host  --duration 30 --rate 20
-#   CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 20
+#   CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 100 --producers 8
+#
+# --rate is the aggregate offered load and --producers sizes the connection
+# pool. A synchronous producer offers at most one record per broker round trip,
+# so high rates need enough concurrent producers to cover the guest's latency.
+# The QEMU guest derives its socket-set capacity from the tcpip heap. The
+# default image currently has 64 slots and a 16-socket per-principal quota;
+# closing TCP sockets may remain charged until smoltcp reaches a final state.
 #
 # A QEMU guest is preserved by default when the load client fails, so the
 # running kernel can be inspected. Use --cleanup-on-failure in unattended CI.
@@ -34,6 +41,7 @@ MODE="qemu"
 ARCH="auto"
 DURATION="3600"
 RATE="20"
+PRODUCERS="4"
 MAX_ERRORS="100"
 BOOTSTRAP=""
 NO_BUILD="0"
@@ -47,12 +55,13 @@ while [ "$#" -gt 0 ]; do
         --arch) ARCH="$2"; shift 2 ;;
         --duration) DURATION="$2"; shift 2 ;;
         --rate) RATE="$2"; shift 2 ;;
+        --producers) PRODUCERS="$2"; shift 2 ;;
         --max-errors) MAX_ERRORS="$2"; shift 2 ;;
         --bootstrap) BOOTSTRAP="$2"; shift 2 ;;
         --no-build) NO_BUILD="1"; shift ;;
         --keep) KEEP="1"; shift ;;
         --cleanup-on-failure) CLEANUP_ON_FAILURE="1"; shift ;;
-        *) echo "usage: $0 [--host|--qemu] [--arch aarch64|x86_64|auto] [--duration S] [--rate N] [--max-errors N] [--bootstrap HOST:PORT] [--no-build] [--keep] [--cleanup-on-failure]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--host|--qemu] [--arch aarch64|x86_64|auto] [--duration S] [--rate N] [--producers N] [--max-errors N] [--bootstrap HOST:PORT] [--no-build] [--keep] [--cleanup-on-failure]" >&2; exit 2 ;;
     esac
 done
 
@@ -117,11 +126,12 @@ ensure_client_env
 run_client() {
     local bootstrap="$1"
     local log="$2"
-    echo ">>> load client: bootstrap=$bootstrap duration=${DURATION}s rate=$RATE/s log=$log"
+    echo ">>> load client: bootstrap=$bootstrap duration=${DURATION}s producers=$PRODUCERS rate=$RATE/s log=$log"
     "$VENV/bin/python" "$CLIENT" \
         --bootstrap "$bootstrap" \
         --duration "$DURATION" \
         --rate "$RATE" \
+        --producers "$PRODUCERS" \
         --max-errors "$MAX_ERRORS" 2>&1 | tee "$log"
 }
 
@@ -215,7 +225,7 @@ CATTEN_DEPLOY_NAME=broker \
 CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
 CATTEN_DEPLOY_OBJECT_KEY=deployments/broker.elf \
 CATTEN_DEPLOY_STACK_PAGES=8 \
-CATTEN_DEPLOY_MAX_THREADS=16 \
+CATTEN_DEPLOY_MAX_THREADS=64 \
 CATTEN_DEPLOY_GRACE_MS=5000 \
 CATTEN_DEPLOY_GRANTS="tcpip=client broker=publish" \
 CATTEN_APP_HOST_PORT="$APP_HOST_PORT" \

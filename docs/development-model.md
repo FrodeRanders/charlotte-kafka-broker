@@ -1,9 +1,7 @@
 # Development model: the CharlotteOS boundary
 
 This repository is an out-of-tree CharlotteOS application and a worked example
-of how to develop one. It consumes CharlotteOS as a platform. It does not
-develop CharlotteOS itself, and the two repositories meet at a small, explicit
-contract.
+of how to develop one. It consumes CharlotteOS as a platform.
 
 The development view from here is:
 
@@ -226,8 +224,20 @@ CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 
 ```
 
 The QEMU path builds the image with the client-reachable advertised address,
-deploys it, keeps the guest alive for the requested duration, and verifies that
-every consumed value matches its log offset. `--arch aarch64|x86_64|auto`
+deploys it, keeps the guest alive for the requested duration, and verifies log
+continuity, value integrity, and per-producer sequence monotonicity. `--rate` is
+the aggregate offered load and `--producers` (default 4) sizes the connection
+pool: a synchronous producer offers at most one record per broker round trip,
+so a rate is reachable only when the pool covers the guest's request latency.
+The guest's `tcpip` service owns a heap-sized smoltcp socket set shared by local
+services. The default policy requests 64 slots and charges each authenticated
+principal at most 16 sockets and 512 KiB of buffers. A TCP socket in FIN-WAIT
+or TIME-WAIT remains charged until the stack reaches a final state, so a burst
+of reconnects can temporarily exhaust the per-principal budget even when the
+number of active sessions is lower. The soak runner deploys the broker with a
+64-thread budget and preserves the guest on failure; the broker logs socket
+admission failures and retries instead of aborting the address space.
+`--arch aarch64|x86_64|auto`
 selects the guest and EL0 image architecture and defaults to the host, so an
 Intel machine exercises the native x86_64 path and Apple Silicon the aarch64
 one. Each partition is bounded to a small retained-byte budget so the 4 MiB EL0
