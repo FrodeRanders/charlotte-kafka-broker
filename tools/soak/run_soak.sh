@@ -18,13 +18,16 @@
 # Usage:
 #   tools/soak/run_soak.sh --host  --duration 30 --rate 20
 #   CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 100 --producers 8
+#   CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --kernel-profile release --no-net-dump
 #
 # --rate is the aggregate offered load and --producers sizes the connection
 # pool. A synchronous producer offers at most one record per broker round trip,
 # so high rates need enough concurrent producers to cover the guest's latency.
 # The QEMU guest derives its socket-set capacity from the tcpip heap. The
-# default image currently has 64 slots and a 16-socket per-principal quota;
+# default image currently has 64 slots and a 64-socket per-principal quota;
 # closing TCP sockets may remain charged until smoltcp reaches a final state.
+# QEMU runs use a debug kernel and packet capture by default; use
+# `--kernel-profile release` and `--no-net-dump` for a leaner measurement.
 #
 # A QEMU guest is preserved by default when the load client fails, so the
 # running kernel can be inspected. Use --cleanup-on-failure in unattended CI.
@@ -47,6 +50,8 @@ BOOTSTRAP=""
 NO_BUILD="0"
 KEEP="0"
 CLEANUP_ON_FAILURE="0"
+KERNEL_PROFILE="${CATTEN_SOAK_KERNEL_PROFILE:-debug}"
+NET_DUMP="${CATTEN_SOAK_NET_DUMP:-1}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -61,9 +66,26 @@ while [ "$#" -gt 0 ]; do
         --no-build) NO_BUILD="1"; shift ;;
         --keep) KEEP="1"; shift ;;
         --cleanup-on-failure) CLEANUP_ON_FAILURE="1"; shift ;;
-        *) echo "usage: $0 [--host|--qemu] [--arch aarch64|x86_64|auto] [--duration S] [--rate N] [--producers N] [--max-errors N] [--bootstrap HOST:PORT] [--no-build] [--keep] [--cleanup-on-failure]" >&2; exit 2 ;;
+        --kernel-profile)
+            [ "$#" -ge 2 ] || { echo "Missing value for --kernel-profile" >&2; exit 2; }
+            KERNEL_PROFILE="$2"; shift 2 ;;
+        --net-dump) NET_DUMP="1"; shift ;;
+        --no-net-dump) NET_DUMP="0"; shift ;;
+        *)
+            echo "usage: $0 [--host|--qemu] [--arch aarch64|x86_64|auto] [--duration S] [--rate N] [--producers N] [--max-errors N] [--bootstrap HOST:PORT] [--kernel-profile debug|release] [--net-dump|--no-net-dump] [--no-build] [--keep] [--cleanup-on-failure]" >&2
+            exit 2
+            ;;
     esac
 done
+
+case "$KERNEL_PROFILE" in
+    debug|release) ;;
+    *) echo "error: --kernel-profile must be debug or release" >&2; exit 2 ;;
+esac
+case "$NET_DUMP" in
+    0|1) ;;
+    *) echo "error: packet capture setting must be 0 or 1" >&2; exit 2 ;;
+esac
 
 mkdir -p "$BROKER_ROOT/target"
 
@@ -203,14 +225,13 @@ RESULT_FILE="$OS_DIR/target/deployment-ingress-test/result"
 RUNNER_PID_FILE="$BROKER_ROOT/target/soak-runner.pid"
 QEMU_PID_FILE="$BROKER_ROOT/target/soak-qemu.pid"
 GDB_PORT="${CATTEN_SOAK_GDB_PORT:-1234}"
-NET_DUMP="${CATTEN_SOAK_NET_DUMP:-1}"
 MONITOR_SOCKET="/tmp/charlotte-monitor.sock"
 PCAP_FILE="/tmp/charlotte-net.pcap"
 SERIAL_LOG="/tmp/charlotte-serial.log"
 if [ "$ARCH" = "x86_64" ]; then
     SERIAL_LOG="/tmp/charlotte-x86-serial.log"
 fi
-KERNEL_BINARY="$OS_DIR/target/${ARCH}-unknown-none-catten/debug/catten"
+KERNEL_BINARY="$OS_DIR/target/${ARCH}-unknown-none-catten/${KERNEL_PROFILE}/catten"
 
 if [ "$NO_BUILD" != "1" ]; then
     echo ">>> building broker-el0 for $ARCH with advertised endpoint 127.0.0.1:$APP_HOST_PORT"
@@ -220,7 +241,7 @@ if [ "$NO_BUILD" != "1" ]; then
 fi
 rm -f "$RESULT_FILE" "$RUNNER_PID_FILE" "$QEMU_PID_FILE" "$MONITOR_SOCKET" "$PCAP_FILE"
 
-echo ">>> booting $ARCH guest; hold=${HOLD}s timeout=${TIMEOUT}s (log: $LOG)"
+echo ">>> booting $ARCH guest; kernel=${KERNEL_PROFILE} net_dump=${NET_DUMP} hold=${HOLD}s timeout=${TIMEOUT}s (log: $LOG)"
 CATTEN_DEPLOY_NAME=broker \
 CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
 CATTEN_DEPLOY_OBJECT_KEY=deployments/broker.elf \
@@ -235,7 +256,7 @@ CATTEN_QEMU_PID_FILE="$QEMU_PID_FILE" \
 CATTEN_QEMU_MONITOR=1 \
 CATTEN_QEMU_NET_DUMP="$NET_DUMP" \
 CATTEN_QEMU_DEBUG_STUB=1 \
-"$RUNNER" debug --deployment-ingress-test --gdb-port "$GDB_PORT" \
+"$RUNNER" "$KERNEL_PROFILE" --deployment-ingress-test --gdb-port "$GDB_PORT" \
     --timeout "$TIMEOUT" \
     >"$LOG" 2>&1 &
 RUNNER_PID=$!

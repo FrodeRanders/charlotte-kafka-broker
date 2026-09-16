@@ -207,6 +207,163 @@ read-only descriptor capability; the launch manifest is empty. It acquires its
 named grants and publishes its endpoint through `grant_client` under the
 artifact name in the descriptor.
 
+### 3.5.1 Manual RustFS and VMware deployment
+
+The following is the long-form version of the automated deployment fixture. It
+keeps RustFS, signing, upload, admission, and load generation visible as
+separate operator actions. It assumes a single x86-64 VMware guest on a
+bridged LAN (a host-only network also works when it supplies DHCP and routes
+the host to the guest). Replace the addresses with values from the local LAN:
+
+```sh
+export CHARLOTTE_OS_DIR="$PWD/../charlotte-os"
+export VM_IP=192.168.1.42             # DHCP lease of the CharlotteOS guest
+export RUSTFS_HOST_IP=192.168.1.20    # address of the Docker host
+export RUSTFS_HOSTNAME=rustfs.test    # DNS name in the certificate/profile
+```
+
+The hostname must resolve from the guest to `RUSTFS_HOST_IP`; create a LAN DNS
+record (or use the organisation's existing RustFS name). TLS verification is
+name-based, so do not put an arbitrary IP in the profile while retaining a
+certificate for a different name.
+
+1. Build and boot a fresh VMware appliance. In Fusion/Workstation select a
+   bridged adapter, or a host-only adapter with DHCP, before powering it on:
+
+   ```sh
+   cd "$CHARLOTTE_OS_DIR"
+   scripts/build-vmware-x86_64.sh release --replace
+   # Open os-images/vmware/CharlotteOS.vmwarevm/CharlotteOS.vmx and boot it.
+   # Obtain VM_IP from the LAN DHCP lease table or the operator's inventory.
+   ```
+
+   CharlotteOS then starts its ordinary DHCP, discovery, cluster, storage,
+   deployment, TCP/IP, and time services. VMware NAT is suitable for local
+   qualification, but bridged/host-only networking is the direct-address path
+   used here; no host-port forwarding is required.
+
+2. Create a short-lived TLS RustFS fixture on the Docker host. The compose file
+   binds localhost by default; `CATTEN_RUSTFS_BIND_ADDRESS` publishes it on the
+   LAN so the guest can reach it. Keep the private CA and server key outside
+   version control:
+
+   ```sh
+   export RUSTFS_DIR="$CHARLOTTE_OS_DIR/target/manual-rustfs"
+   export CATTEN_RUSTFS_CERT_DIR="$RUSTFS_DIR/certs"
+   export CATTEN_RUSTFS_BIND_ADDRESS="$RUSTFS_HOST_IP"
+   export CATTEN_RUSTFS_PORT=19000
+   mkdir -p "$CATTEN_RUSTFS_CERT_DIR"
+
+   openssl ecparam -name prime256v1 -genkey -noout \
+     -out "$CATTEN_RUSTFS_CERT_DIR/ca.key"
+   openssl req -x509 -new -sha256 -days 2 \
+     -key "$CATTEN_RUSTFS_CERT_DIR/ca.key" \
+     -subj "/CN=CharlotteOS manual RustFS CA" \
+     -addext "basicConstraints=critical,CA:TRUE" \
+     -addext "keyUsage=critical,keyCertSign,cRLSign" \
+     -out "$CATTEN_RUSTFS_CERT_DIR/ca.crt"
+   openssl ecparam -name prime256v1 -genkey -noout \
+     -out "$CATTEN_RUSTFS_CERT_DIR/rustfs_key.pem"
+   openssl req -new -sha256 \
+     -key "$CATTEN_RUSTFS_CERT_DIR/rustfs_key.pem" \
+     -subj "/CN=$RUSTFS_HOSTNAME" \
+     -out "$CATTEN_RUSTFS_CERT_DIR/rustfs.csr"
+   printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyAgreement\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' \
+     "$RUSTFS_HOSTNAME" > "$RUSTFS_DIR/server-ext.cnf"
+   openssl x509 -req -sha256 -days 2 \
+     -in "$CATTEN_RUSTFS_CERT_DIR/rustfs.csr" \
+     -CA "$CATTEN_RUSTFS_CERT_DIR/ca.crt" \
+     -CAkey "$CATTEN_RUSTFS_CERT_DIR/ca.key" -CAcreateserial \
+     -extfile "$RUSTFS_DIR/server-ext.cnf" \
+     -out "$CATTEN_RUSTFS_CERT_DIR/rustfs_cert.pem"
+   openssl x509 -in "$CATTEN_RUSTFS_CERT_DIR/ca.crt" -outform DER \
+     -out "$CATTEN_RUSTFS_CERT_DIR/ca.der"
+   chmod 0644 "$CATTEN_RUSTFS_CERT_DIR/ca.crt" \
+     "$CATTEN_RUSTFS_CERT_DIR/ca.der" \
+     "$CATTEN_RUSTFS_CERT_DIR/rustfs_cert.pem" \
+     "$CATTEN_RUSTFS_CERT_DIR/rustfs_key.pem"
+
+   export RUSTFS_COMPOSE="$CHARLOTTE_OS_DIR/docker/rustfs-s3-test/compose.yaml"
+   docker compose -f "$RUSTFS_COMPOSE" down --volumes --remove-orphans
+   docker compose -f "$RUSTFS_COMPOSE" up -d --wait rustfs
+   docker compose -f "$RUSTFS_COMPOSE" run --rm init
+   ```
+
+   The fixture creates bucket `charlotte-test` and uses access key
+   `charlotte-test-access` with secret
+   `charlotte-test-secret-2026`. These are development credentials only.
+
+3. Build the broker with the guest's directly reachable address, add the CLS2
+   signature, and upload the exact signed bytes to RustFS. The upload runs in
+   the RustFS CLI container, so it does not require `rc` on the host:
+
+   ```sh
+   cd ../charlotte-kafka-broker
+   tools/charlotte-sdk.sh use-os "$CHARLOTTE_OS_DIR"
+   tools/charlotte-sdk.sh build-signer
+   BROKER_ADVERTISE_HOST="$VM_IP" BROKER_ADVERTISE_PORT=9092 \
+     tools/build-elf.sh --arch x86_64
+   tools/package.sh sign
+
+   docker compose -f "$RUSTFS_COMPOSE" run --rm --no-deps \
+     -v "$PWD/target/elf/broker.elf:/tmp/broker.elf:ro" \
+     --entrypoint /bin/sh init -ec \
+     "rc alias set local https://$RUSTFS_HOSTNAME:9000 \\
+        charlotte-test-access charlotte-test-secret-2026 && \\
+        rc cp /tmp/broker.elf local/charlotte-test/deployments/broker.elf"
+   ```
+
+   `tools/package.sh sign` signs the final ELF before the upload. Never upload
+   an ELF, then sign or strip it: the descriptor digest must match the bytes
+   that the agent retrieves.
+
+4. Sign a descriptor and tell the cluster to admit it. The node key `0` lets a
+   singleton placement choose the eligible node (the only node in this setup):
+
+   ```sh
+   . .charlotte/platform.env
+   KEY_HEX="$(grep -v '^#' "$CHARLOTTE_KEYS_DIR/dev-key.hex" | tr -d '[:space:]')"
+   DIGEST="$($CHARLOTTE_CLUSTER_SIGN sha256 target/elf/broker.elf)"
+   SEQUENCE="$(date +%s)"
+   mkdir -p target/manual-deployment
+
+   "$CHARLOTTE_CLUSTER_SIGN" deployment-sign \
+     target/manual-deployment/broker.cdep broker \
+     deployments/broker.elf "$DIGEST" 0 "$SEQUENCE" 8 64 5000 \
+     "$KEY_HEX" tcpip=client broker=publish
+   "$CHARLOTTE_CLUSTER_SIGN" deployment-notify \
+     target/manual-deployment/broker.cdep "$VM_IP:7444"
+   "$CHARLOTTE_CLUSTER_SIGN" deployment-status broker "$VM_IP:7444" 180
+   ```
+
+   `deployment-status` must report the exact generation as ready before the
+   broker is used. The signed descriptor contains no S3 credentials; it names
+   only the opaque object key. The node's separately provisioned `s3` connector
+   fetches and verifies the object.
+
+5. Drive the broker directly over the VMware LAN address. The normal soak
+   wrapper is QEMU-specific, so invoke its independent client explicitly:
+
+   ```sh
+   python3 -m venv tools/soak/.venv
+   tools/soak/.venv/bin/python -m pip install -r tools/soak/requirements.txt
+   tools/soak/.venv/bin/python tools/soak/soak_client.py \
+     --bootstrap "$VM_IP:9092" --duration 600 --rate 20 --producers 4
+   ```
+
+There is one current platform prerequisite for this otherwise complete
+sequence: a stock VMware appliance does not yet expose an operator-facing
+command for provisioning the bootstrap `s3` connector profile. The QEMU
+`--deployment-ingress-test` fixture injects that profile through test-only
+launch code; a normal VMware boot therefore logs `S3 GET unavailable:
+connector is not registered` until the profile is provisioned. The profile must
+contain the RustFS LAN endpoint, matching `RUSTFS_HOSTNAME`, port 19000, the CA
+DER from `ca.der`, bucket `charlotte-test`, and the fixture credentials, with
+GET rights. Adding a sealed/bootstrap profile provisioning command is the
+remaining step needed to make the VMware procedure fully turnkey; the build,
+upload, signing, and cluster-admission steps above are already manual and
+supported.
+
 ### 3.6 Operate
 
 `deployment-status` reports the exact committed generation. Broker readiness
@@ -221,6 +378,9 @@ client against either the host front end or a deployed QEMU image:
 ```sh
 tools/soak/run_soak.sh --host --duration 60 --rate 20
 CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 20
+# Leaner QEMU measurement: optimized kernel and no packet capture.
+CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh \
+  --kernel-profile release --no-net-dump --duration 600 --rate 100 --producers 8
 ```
 
 The QEMU path builds the image with the client-reachable advertised address,
@@ -231,7 +391,7 @@ pool: a synchronous producer offers at most one record per broker round trip,
 so a rate is reachable only when the pool covers the guest's request latency.
 The guest's `tcpip` service owns a heap-sized smoltcp socket set shared by local
 services. The default policy requests 64 slots and charges each authenticated
-principal at most 16 sockets and 512 KiB of buffers. A TCP socket in FIN-WAIT
+principal at most 64 sockets and 2 MiB of buffers. A TCP socket in FIN-WAIT
 or TIME-WAIT remains charged until the stack reaches a final state, so a burst
 of reconnects can temporarily exhaust the per-principal budget even when the
 number of active sessions is lower. The soak runner deploys the broker with a
@@ -253,8 +413,27 @@ destroying it in the shell exit trap. The runner's calculated safety timeout
 still provides an eventual upper bound. Unattended automation that prefers the
 old teardown behavior passes `--cleanup-on-failure`; `--keep` continues to mean
 that a successful run waits for the guest's hold period instead of cleaning it
-up immediately. `CATTEN_SOAK_GDB_PORT` selects the debugging port and
-`CATTEN_SOAK_NET_DUMP=0` disables the default packet capture.
+up immediately. The QEMU runner uses a debug kernel and packet capture by
+default. `--kernel-profile release` (or
+`CATTEN_SOAK_KERNEL_PROFILE=release`) selects the optimized kernel, while
+`--no-net-dump` (or `CATTEN_SOAK_NET_DUMP=0`) disables packet capture;
+`--net-dump` explicitly enables it.
+
+The CharlotteOS repository also builds a VMware Fusion/Workstation appliance
+(`scripts/build-vmware-x86_64.sh`). It boots the ordinary single-node service
+configuration, so it is suitable for exercising the same deployment and broker
+workload. With the adapter attached to a bridged (or suitable host-only)
+network, CharlotteOS obtains its address from the LAN's DHCP service and the
+host reaches deployment port 7444 and the broker port directly; no QEMU-style
+host forwarding is involved. The supplied VMX defaults to VMware NAT for
+portable first-boot qualification, so change that attachment when direct LAN
+reachability is wanted. The remaining soak-runner work is lifecycle and
+address handoff: starting the VM, learning the DHCP lease (or accepting an
+operator-supplied guest address), and passing `<guest-ip>:7444` to the signed
+deployment client and `<guest-ip>:9092` to the load client. RustFS must likewise
+be reachable from the guest. Until that adapter exists, use QEMU for the
+repeatable automated deployment flow and the VMware appliance for manual LAN
+qualification.
 
 The EL0 broker emits a low-rate progress heartbeat rather than logging every
 Kafka request. Its cumulative `frames`, `handled`, and `sent` counters localize
