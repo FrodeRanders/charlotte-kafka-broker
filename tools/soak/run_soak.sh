@@ -197,6 +197,9 @@ case "$ARCH" in
     aarch64|x86_64) ;;
     *) echo "error: --arch must be aarch64, x86_64, or auto" >&2; exit 2 ;;
 esac
+# Platform runners own generated OS artifacts; isolate those writes here.
+OS_DIR="$("$BROKER_ROOT/tools/charlotte-sdk.sh" runner-os "$OS_DIR")"
+
 RUNNER="$OS_DIR/scripts/run-$ARCH.sh"
 if [ ! -x "$RUNNER" ]; then
     echo "error: no QEMU runner at $RUNNER" >&2
@@ -221,7 +224,6 @@ HOLD=$((DURATION + 120))
 TIMEOUT=$((HOLD + 600))
 LOG="$BROKER_ROOT/target/soak-qemu.log"
 CLIENT_LOG="$BROKER_ROOT/target/soak-client.log"
-RESULT_FILE="$OS_DIR/target/deployment-ingress-test/result"
 RUNNER_PID_FILE="$BROKER_ROOT/target/soak-runner.pid"
 QEMU_PID_FILE="$BROKER_ROOT/target/soak-qemu.pid"
 GDB_PORT="${CATTEN_SOAK_GDB_PORT:-1234}"
@@ -239,8 +241,9 @@ if [ "$NO_BUILD" != "1" ]; then
         "$BROKER_ROOT/tools/build-elf.sh" --arch "$ARCH"
     "$BROKER_ROOT/tools/package.sh" sign
 fi
-rm -f "$RESULT_FILE" "$RUNNER_PID_FILE" "$QEMU_PID_FILE" "$MONITOR_SOCKET" "$PCAP_FILE"
+rm -f "$RUNNER_PID_FILE" "$QEMU_PID_FILE" "$MONITOR_SOCKET" "$PCAP_FILE"
 
+: >"$LOG"
 echo ">>> booting $ARCH guest; kernel=${KERNEL_PROFILE} net_dump=${NET_DUMP} hold=${HOLD}s timeout=${TIMEOUT}s (log: $LOG)"
 CATTEN_DEPLOY_NAME=broker \
 CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
@@ -290,7 +293,7 @@ preserve_guest() {
 }
 
 deadline=$((SECONDS + 900))
-while [ ! -f "$RESULT_FILE" ]; do
+while ! broker_deployment_ready "$OS_DIR" "$LOG"; do
     if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
         echo "error: QEMU runner exited before readiness; tail of $LOG:" >&2
         tail -40 "$LOG" >&2 || true

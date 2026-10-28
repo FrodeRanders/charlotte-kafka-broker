@@ -9,8 +9,9 @@
 #
 # Commands:
 #   fetch                    Sparse-clone the pinned revision and use it.
-#   use-os DIR [--force]     Use an existing CharlotteOS checkout.
-#   worktree SOURCE [DIR]    Detach a worktree at the pinned tag and use it.
+#   use-os DIR     Use an existing CharlotteOS checkout.
+#   worktree SOURCE [DIR]    Clone SOURCE locally at the pinned revision (SOURCE stays read-only).
+#   runner-os SOURCE         Prepare a private OS/Sitas mirror for QEMU runners.
 #   unpack TARBALL           Unpack an exported application SDK tarball.
 #   build-signer             Build cluster-sign from the resolved signer tree.
 #   env                      Print shell exports for the resolved platform.
@@ -53,48 +54,41 @@ sha256_of() {
 
 check_os_revision() {
     local dir="$1"
-    local force="$2"
     local revision
     revision="$(git -C "$dir" rev-parse HEAD 2>/dev/null || echo unknown)"
     if [ "$revision" != "$OS_REVISION" ]; then
-        if [ "$force" = "1" ]; then
-            echo ">>> warning: $dir is at $revision, lock pins $OS_REVISION" >&2
-        else
-            echo "error: $dir is at $revision but charlotte.lock pins $OS_REVISION" >&2
-            echo "       update charlotte.lock, or pass --force for a deliberate override" >&2
-            exit 1
-        fi
+        echo "error: $dir is at $revision but charlotte.lock pins $OS_REVISION" >&2
+        echo "       use worktree SOURCE to resolve a private clone at the pin" >&2
+        exit 1
     fi
 }
 
 cmd_use_os() {
-    local force=0
-    local dir=""
-    while [ "$#" -gt 0 ]; do
-        case "$1" in
-            --force) force=1; shift ;;
-            *) dir="$1"; shift ;;
-        esac
-    done
-    if [ -z "$dir" ]; then
-        echo "usage: $0 use-os <charlotte-os-dir> [--force]" >&2
+    if [ "$#" -ne 1 ]; then
+        echo "usage: $0 use-os <charlotte-os-dir>" >&2
         exit 2
     fi
+    local dir="$1"
     dir="$(cd "$dir" && pwd)"
     [ -f "$dir/scripts/build-external-elf.sh" ] || {
         echo "error: $dir is not a CharlotteOS checkout (no scripts/build-external-elf.sh)" >&2
         exit 1
     }
-    check_os_revision "$dir" "$force"
+    check_os_revision "$dir"
+    # Export the signer into application-owned state: cargo must never create
+    # a lockfile or target output in the read-only platform checkout.
+    local tarball="$STATE/charlotte-app-sdk-$OS_REVISION.tar.gz"
+    "$dir/scripts/export-app-sdk.sh" --output "$tarball"
+    cmd_unpack "$tarball"
+    local sdk="$STATE/sdk/charlotte-app-sdk"
     write_env os "$dir" "$dir/scripts/build-external-elf.sh" \
-        "$dir/tools/cluster-sign/Cargo.toml" "$dir/target" "$dir/tools/cluster-sign"
+        "$sdk/signer/Cargo.toml" "$STATE/signer-target" "$sdk/keys"
     echo ">>> platform: CharlotteOS checkout at $dir"
 }
 
 cmd_worktree() {
     local source="${1:-}"
-    local tag="${OS_TAG:-app-platform-${OS_REVISION:0:8}}"
-    local worktree="${2:-$STATE/worktree-$tag}"
+    local worktree="${2:-$STATE/worktree-$OS_REVISION}"
     if [ -z "$source" ]; then
         echo "usage: $0 worktree <charlotte-os-dir> [worktree-dir]" >&2
         exit 2
@@ -108,11 +102,40 @@ cmd_worktree() {
         echo "error: $worktree already exists; remove it or pass another path" >&2
         exit 1
     fi
-    echo ">>> fetching tag $tag into $source"
-    git -C "$source" fetch origin "refs/tags/$tag:refs/tags/$tag"
-    echo ">>> creating worktree $worktree at $tag"
-    git -C "$source" worktree add --detach "$worktree" "$tag"
+    # A git worktree would write registration metadata into SOURCE/.git.
+    # Use an independent local clone to keep the platform input read-only.
+    git clone --no-checkout --no-hardlinks "$source" "$worktree"
+    git -C "$worktree" checkout --detach "$OS_REVISION"
     cmd_use_os "$worktree"
+}
+
+# QEMU platform runners build the OS and write fixture state. Run them only
+# from an application-owned mirror, retaining the OS's Sitas sibling layout.
+cmd_runner_os() {
+    local source="${1:?usage: runner-os SOURCE}"
+    source="$(cd "$source" && pwd)"
+    local root="$STATE/runner-$OS_REVISION"
+    local os_dir="$root/private/charlotte-os"
+    local sitas_dir="$root/gautelis/sitas"
+    local sitas_source="${CHARLOTTE_SITAS_DIR:-$source/../../gautelis/sitas}"
+    mkdir -p "$root/private" "$root/gautelis"
+    if [ ! -d "$os_dir/.git" ]; then
+        git clone --no-checkout --no-hardlinks "$source" "$os_dir" >&2
+        git -C "$os_dir" checkout --detach "$OS_REVISION" >&2
+    fi
+    check_os_revision "$os_dir"
+    if [ ! -d "$sitas_dir/.git" ]; then
+        if [ ! -d "$sitas_source/.git" ]; then
+            sitas_source="$SITAS_REPOSITORY"
+        fi
+        git clone --no-checkout --no-hardlinks "$sitas_source" "$sitas_dir" >&2
+        git -C "$sitas_dir" checkout --detach "$SITAS_REVISION" >&2
+    fi
+    [ "$(git -C "$sitas_dir" rev-parse HEAD)" = "$SITAS_REVISION" ] || {
+        echo "error: runner Sitas checkout differs from charlotte.lock" >&2
+        exit 1
+    }
+    printf '%s\n' "$os_dir"
 }
 
 cmd_unpack() {
@@ -173,8 +196,9 @@ cmd_fetch() {
         crates/charlotte-launch \
         tools/cluster-sign \
         scripts
+    git -C "$os_dir" fetch origin "$OS_REVISION"
     echo ">>> checking out $OS_REVISION"
-    git -C "$os_dir" checkout "$OS_REVISION"
+    git -C "$os_dir" checkout --detach "$OS_REVISION"
 
     # A sparse checkout cannot build cluster-sign directly: the OS workspace
     # manifest lists members that were not fetched. Export the SDK, which has
@@ -188,6 +212,11 @@ load_env() {
     if [ -f "$ENV_FILE" ]; then
         # shellcheck source=/dev/null
         . "$ENV_FILE"
+        if [ "${CHARLOTTE_OS_REVISION:-}" != "$OS_REVISION" ] ||
+           [ "${CHARLOTTE_TOOLCHAIN:-}" != "$TOOLCHAIN" ]; then
+            echo "error: stale platform resolution; run use-os, fetch, or unpack again" >&2
+            exit 1
+        fi
     fi
 }
 
@@ -199,7 +228,7 @@ cmd_build_signer() {
     fi
     local binary="$CHARLOTTE_SIGNER_TARGET/debug/cluster-sign"
     echo ">>> building cluster-sign with $TOOLCHAIN"
-    (cd /tmp && cargo "+$TOOLCHAIN" build --manifest-path "$CHARLOTTE_SIGNER_MANIFEST")
+    (cd /tmp && cargo "+$TOOLCHAIN" build --manifest-path "$CHARLOTTE_SIGNER_MANIFEST" --target-dir "$CHARLOTTE_SIGNER_TARGET")
     if [ ! -x "$binary" ]; then
         echo "error: expected signer binary at $binary" >&2
         exit 1
@@ -241,12 +270,13 @@ case "$command" in
     fetch) cmd_fetch "$@" ;;
     use-os) cmd_use_os "$@" ;;
     worktree) cmd_worktree "$@" ;;
+    runner-os) cmd_runner_os "$@" ;;
     unpack) cmd_unpack "$@" ;;
     build-signer) cmd_build_signer "$@" ;;
     env) cmd_env "$@" ;;
     status) cmd_status "$@" ;;
     *)
-        echo "usage: $0 fetch | use-os DIR [--force] | worktree SOURCE [DIR] | unpack TARBALL | build-signer | env | status" >&2
+        echo "usage: $0 fetch | use-os DIR | worktree SOURCE [DIR] | runner-os SOURCE | unpack TARBALL | build-signer | env | status" >&2
         exit 2
         ;;
 esac

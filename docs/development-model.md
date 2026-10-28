@@ -7,7 +7,7 @@ The development view from here is:
 
 ```text
 develop  ->  compile  ->  package/sign  ->  upload  ->  deploy  ->  operate
- host lane    EL0 ELF      CLS2 note         S3 store     CDEPLOY5    status
+ host lane    EL0 ELF      CLS2 note         S3 store     CDEPLOY6    status
  tests        + strip      + SHA-256         (CI/ops)     descriptor  + grants
 ```
 
@@ -53,7 +53,7 @@ Hard rules:
 | Toolchain | OS repository | `rust-toolchain.toml` and `charlotte.lock` |
 | Machine image layout | `crates/catten-services/aarch64-unknown-none.json` and `link.x` | OS checkout revision |
 | ELF signing note | CLS2, `charlotte-launch/src/signature_note.rs` | OS checkout revision |
-| Deployment descriptor | `CDEPLOY5`/`CRELEASE`, `charlotte-launch/src/deployment.rs` | OS checkout revision |
+| Deployment descriptor | `CDEPLOY6`/`CRELEASE`, `charlotte-launch/src/deployment.rs` | OS checkout revision |
 | Runtime authority | Launch page v2, typed manifest, capability vector, `grantctl` | OS checkout revision |
 | Wire versions | `charlotte-kafka` version table | OS checkout revision |
 
@@ -62,6 +62,15 @@ The platform crates and tooling pin CharlotteOS revision
 `d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78`. The committed `Cargo.lock`
 resolves these immutable revisions. `charlotte.lock` records the same inputs
 for platform resolution. The Rust toolchain remains `nightly-2026-07-27`.
+
+Current descriptors are `CDEPLOY6` only. Each binds one or more artifact
+variants with an exact signed-ELF digest, object key, architecture, required
+CPU features, and runtime ABI. Runtime ABI **3** is required; the earlier IPC
+receive and unchecked CQ wait interfaces are retired. The Sitas pin supplies
+the checked CQ wait implementation. Platform resolution rejects mismatches;
+the former `use-os --force` override is retired. Rebuild and re-sign every binary when
+adopting an ABI change; signing an older binary with a newer signer does not
+upgrade its syscall contract.
 
 Authoritative OS references: `docs/guides/userspace-development.md`,
 `docs/reference/deployment-ingress.md`,
@@ -80,8 +89,8 @@ Two equivalent sources provide the platform build and signing tools:
   `charlotte.lock` and uses its `scripts/build-external-elf.sh` and
   `tools/cluster-sign`. When the local checkout has moved past the pinned
   revision, `tools/charlotte-sdk.sh worktree ../charlotte-os` creates a
-  detached worktree at the immutable platform tag from that checkout, leaving
-  `main` untouched, and resolves the worktree instead;
+  private local clone at the pinned revision, leaving the source checkout and
+  its git metadata untouched, and resolves that clone instead;
 - an exported SDK tarball (new projects, CI): CharlotteOS produces one with
   `scripts/export-app-sdk.sh`; `tools/charlotte-sdk.sh unpack <tarball>` checks
   its SHA-256, unpacks it under `.charlotte/sdk`, and uses its build wrapper,
@@ -89,8 +98,10 @@ Two equivalent sources provide the platform build and signing tools:
   keys. `tools/charlotte-sdk.sh fetch` sparse-clones the pinned revision when
   neither of the above exists.
 
+`use-os` exports the signer into `.charlotte/sdk`, and
 `tools/charlotte-sdk.sh build-signer` builds `cluster-sign` with the pinned
-toolchain and records its path in `.charlotte/platform.env`. Everything under
+toolchain into `.charlotte/signer-target` and records its path in
+`.charlotte/platform.env`. Everything under
 `.charlotte/` is generated and git-ignored, and a CharlotteOS checkout is never
 written.
 
@@ -101,6 +112,7 @@ on the host:
 
 ```sh
 cargo test
+python3 -m unittest discover -s tools/tests
 cargo run --example host_broker
 ```
 
@@ -127,6 +139,10 @@ application manifest and output path. The platform builder:
 3. strips the result with `llvm-objcopy` and rejects writable executable or
    page-overlapping LOAD segments.
 
+The freestanding x86 target also selects `--cfg polyval_force_soft` through
+`.cargo/config.toml`, matching CharlotteOS's required erasing POLYVAL backend.
+The architecture-based selector covers the builder's generated target name.
+
 Output: `target/elf/broker.elf`. The EL0 crate is excluded from default
 workspace builds because it is `no_std`; the host test loop never requires an
 OS checkout.
@@ -142,20 +158,22 @@ tools/package.sh sign
 
 The artifact identity (`broker`, class `service`, version 1, rollback 1,
 flags 0) is application policy. The development key is used unless
-`CHARLOTTE_SIGN_KEY_HEX` names another key; production uses the offline cluster
-key and is an operator action. The OS-side `artifact-policy.tsv` is an in-tree
+`CHARLOTTE_SIGN_KEY_FILE` names a mode-0600 private-key file. The retired `CHARLOTTE_SIGN_KEY_HEX`
+setting is rejected. Production uses the offline cluster key and is an operator action. The OS-side `artifact-policy.tsv` is an in-tree
 build convenience and is not used by out-of-tree artifacts.
 
 The equivalent manual invocation is:
 
 ```sh
 CLUSTER_SIGN="$CHARLOTTE_CLUSTER_SIGN"   # from tools/charlotte-sdk.sh env
-KEY_HEX="$(grep -v '^#' "$CHARLOTTE_KEYS_DIR/dev-key.hex" | tr -d '[:space:]')"
-"$CLUSTER_SIGN" elf-sign target/elf/broker.elf broker "$KEY_HEX" service 1 1 0 -
+mkdir -p .charlotte/keys
+install -m 0600 "$CHARLOTTE_KEYS_DIR/dev-key.hex" .charlotte/keys/dev-key.hex
+KEY_FILE="$PWD/.charlotte/keys/dev-key.hex"
+"$CLUSTER_SIGN" elf-sign target/elf/broker.elf broker "$KEY_FILE" service 1 1 0 -
 DIGEST="$("$CLUSTER_SIGN" sha256 target/elf/broker.elf)"
 ```
 
-`elf-sign` arguments are name, private key, class, version, rollback counter,
+`elf-sign` arguments are name, private-key file, class, version, rollback counter,
 flags, and provenance digest.
 
 ### 3.4 Upload (operator or CI)
@@ -173,22 +191,38 @@ artifacts. Until it does, this step belongs to the operator.
 
 ### 3.5 Deploy (CharlotteOS tools)
 
-Create the signed `CDEPLOY5` descriptor. The application owns the content:
-exact digest, object key, placement, per-thread stack pages, maximum active
+Create the signed `CDEPLOY6` descriptor. The application owns the content:
+signed ELF path (the signer derives its digest and architecture), object key,
+placement, per-thread stack pages, maximum active
 threads, shutdown grace, and the named grants. CharlotteOS owns the signature
 and admission:
 
 ```sh
 "$CLUSTER_SIGN" deployment-sign deploy/broker.cdep broker \
-  deployments/broker-1.elf "$DIGEST" 0 "$(date +%s)" 8 8 5000 "$KEY_HEX" \
+  deployments/broker-1.elf target/elf/broker.elf 0 "$(date +%s)" 8 8 5000 "$KEY_FILE" \
   --replicas=3 --spread-replicas --anti-affinity-group=7 \
-  tcpip=client storage=client
+  tcpip=client broker=publish
 
 "$CLUSTER_SIGN" deployment-notify deploy/broker.cdep \
   127.0.0.1:${CATTEN_DEPLOY_HOST_PORT:-8081}
 "$CLUSTER_SIGN" deployment-status broker \
   127.0.0.1:${CATTEN_DEPLOY_HOST_PORT:-8081} 120
 ```
+
+The fourth positional deployment-sign input is the final signed ELF path,
+not a precomputed digest. The primary variant uses runtime ABI 3 and baseline
+CPU features. Additional variants use
+`--variant=OBJECT_KEY,ELF,FEATURE_MASK,PRIORITY,ABI` and share the logical
+artifact name, resource limits, placement, and grants.
+
+Every management command uses verified mTLS. Set
+`CATTEN_MANAGEMENT_CA_FILE`, `CATTEN_MANAGEMENT_CERT_FILE`, and
+`CATTEN_MANAGEMENT_KEY_FILE` to PEM files, with the client certificate enrolled
+as an administrator for mutations. Set `CATTEN_MANAGEMENT_SERVER_NAME` when
+connecting to a numeric address with a DNS certificate identity. The guest
+must have its sealed management TLS resource provisioned; without it, the
+management interfaces remain disabled. Descriptor signing keys and management
+TLS client keys are separate inputs.
 
 Node key `0` addresses any eligible node. For an ordered multi-component
 change, use `release-sign` and `release-apply` instead; admission is atomic
@@ -225,6 +259,13 @@ The hostname must resolve from the guest to `RUSTFS_HOST_IP`; create a LAN DNS
 record (or use the organisation's existing RustFS name). TLS verification is
 name-based, so do not put an arbitrary IP in the profile while retaining a
 certificate for a different name.
+
+Before building the appliance, provision its sealed management TLS resource
+using CharlotteOS's `docs/reference/management-tls.md` and set
+`CATTEN_MANAGEMENT_TLS_RESOURCE` for the image build. On the operator host, set
+the management CA, enrolled administrator certificate, and private-key file
+variables described in section 3.5. An unprovisioned image leaves deployment
+and status listeners disabled.
 
 1. Build and boot a fresh VMware appliance. In Fusion/Workstation select a
    bridged adapter, or a host-only adapter with DHCP, before powering it on:
@@ -321,15 +362,17 @@ certificate for a different name.
 
    ```sh
    . .charlotte/platform.env
-   KEY_HEX="$(grep -v '^#' "$CHARLOTTE_KEYS_DIR/dev-key.hex" | tr -d '[:space:]')"
+   mkdir -p .charlotte/keys
+   install -m 0600 "$CHARLOTTE_KEYS_DIR/dev-key.hex" .charlotte/keys/dev-key.hex
+   KEY_FILE="$PWD/.charlotte/keys/dev-key.hex"
    DIGEST="$($CHARLOTTE_CLUSTER_SIGN sha256 target/elf/broker.elf)"
    SEQUENCE="$(date +%s)"
    mkdir -p target/manual-deployment
 
    "$CHARLOTTE_CLUSTER_SIGN" deployment-sign \
      target/manual-deployment/broker.cdep broker \
-     deployments/broker.elf "$DIGEST" 0 "$SEQUENCE" 8 64 5000 \
-     "$KEY_HEX" tcpip=client broker=publish
+     deployments/broker.elf target/elf/broker.elf 0 "$SEQUENCE" 8 64 5000 \
+     "$KEY_FILE" tcpip=client broker=publish
    "$CHARLOTTE_CLUSTER_SIGN" deployment-notify \
      target/manual-deployment/broker.cdep "$VM_IP:7444"
    "$CHARLOTTE_CLUSTER_SIGN" deployment-status broker "$VM_IP:7444" 180
@@ -350,8 +393,8 @@ certificate for a different name.
      --bootstrap "$VM_IP:9092" --duration 600 --rate 20 --producers 4
    ```
 
-There is one current platform prerequisite for this otherwise complete
-sequence: a stock VMware appliance does not yet expose an operator-facing
+In addition to management TLS provisioning, the bootstrap S3 profile is still
+an operator prerequisite: a stock VMware appliance does not yet expose an operator-facing
 command for provisioning the bootstrap `s3` connector profile. The QEMU
 `--deployment-ingress-test` fixture injects that profile through test-only
 launch code; a normal VMware boot therefore logs `S3 GET unavailable:
@@ -359,7 +402,7 @@ connector is not registered` until the profile is provisioned. The profile must
 contain the RustFS LAN endpoint, matching `RUSTFS_HOSTNAME`, port 19000, the CA
 DER from `ca.der`, bucket `charlotte-test`, and the fixture credentials, with
 GET rights. Adding a sealed/bootstrap profile provisioning command is the
-remaining step needed to make the VMware procedure fully turnkey; the build,
+additional step needed to make the VMware procedure fully turnkey; the build,
 upload, signing, and cluster-admission steps above are already manual and
 supported.
 
@@ -381,6 +424,20 @@ CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 
 CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh \
   --kernel-profile release --no-net-dump --duration 600 --rate 100 --producers 8
 ```
+
+Before invoking a platform runner, the QEMU wrappers use
+`tools/charlotte-sdk.sh runner-os "$CHARLOTTE_OS_DIR"` to create an
+application-owned OS/Sitas mirror under `.charlotte/runner-<revision>/`.
+The pinned OS runner expects a Sitas sibling; the mirror supplies its pinned
+revision. `CHARLOTTE_SITAS_DIR` can name a local clone; otherwise the resolver
+uses the ordinary sibling layout or fetches the Sitas repository. All kernel,
+fixture, certificate, and result output stays in that mirror. The supplied
+CharlotteOS and Sitas checkouts remain read-only. The current OS runners
+provision development management mTLS credentials for their deployment fixture.
+They create a unique `target/deployment-ingress-test/run.*/` directory. The
+wrappers follow the exact descriptor path printed by the current signer and
+wait for that directory's `result`; a previous run's readiness cannot satisfy
+a new deployment.
 
 The QEMU path builds the image with the client-reachable advertised address,
 deploys it, keeps the guest alive for the requested duration, and verifies log
@@ -493,10 +550,10 @@ Implemented:
 - `crates/broker-host/examples/remote_smoke.rs`: the host client that drives
   the deployed image with the pinned `charlotte-kafka` codec;
 - `tools/charlotte-sdk.sh`: platform resolution by checkout, sparse fetch, or
-  SDK tarball, plus `cluster-sign` build;
+  SDK tarball, plus isolated `cluster-sign` build;
 - `tools/build-elf.sh` and `tools/package.sh`: the compile and sign stages;
 - `tools/qemu-smoke.sh`: deploy the signed image into a single-guest cluster
-  through the signed `CDEPLOY5` path and run the host smoke client;
+  through the signed `CDEPLOY6` path and run the host smoke client;
 - `tools/soak/`: the independent kafka-python load client and its runner,
   including the build-time advertised endpoint that lets a host client follow
   metadata through the QEMU forward;
@@ -511,7 +568,10 @@ the host through a SLIRP forward.
 
 Still open:
 
-- in-guest connector interop, blocked on the TLS-listener decision;
+- in-guest connector interop: verified broker TLS plus `AddOffsetsToTxn` v0
+  and `TxnOffsetCommit` v3 are required by the connector; the current broker
+  subset does not implement those APIs. Durga's generated Kafka profile v7
+  describes connector authority, not an extension to this broker's wire subset;
 - segmented durable logs and replicated partitions.
 
 The host development loop requires no OS checkout, which is the point of the

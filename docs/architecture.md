@@ -255,10 +255,19 @@ boundary, ownership matrix, and stage commands are in
 - The expected grants for the EL0 broker are a `tcpip` socket capability and a
   storage capability. No MMIO, interrupt, or DMA authority belongs to the
   broker. Exact grant names and rights are fixed with the EL0 service.
-- TLS is an open question: the CharlotteOS connector requires verified TLS and
-  `embedded-tls` is client-only. The host milestones use plaintext with an
-  external test client; the in-guest connector path needs either a server TLS
-  implementation or a reviewed test-only plaintext profile.
+- The CharlotteOS connector requires verified TLS. CharlotteOS now has a native
+  management TLS server implementation, but this broker has no TLS listener.
+  The host milestones use plaintext with an external test client. In-guest connector interoperability also requires
+  `AddOffsetsToTxn` v0 and `TxnOffsetCommit` v3; these remain outside the
+  current advertised subset.
+
+The EL0 platform contract pins CharlotteOS runtime ABI 3 and the matching Sitas
+checked CQ waits. The accept loop uses `OP_TRY_ACCEPT`, whose would-block reply
+lets the existing bounded sleep/recheck path observe shutdown while idle.
+`OP_ACCEPT` is now deferred and must be combined with lifecycle CQ readiness
+before replacing this polling path. Deployment uses architecture-aware
+`CDEPLOY6` descriptors. See [development model](development-model.md) for pins,
+key-file signing, and management mTLS inputs.
 
 ## 9. Open questions
 
@@ -283,7 +292,7 @@ the same conformance expectations.
   end, and conformance against `charlotte-kafka` request builders and response
   parsers.
 - **M2 - EL0 and deployment (done):** `broker.elf` built through the out-of-tree
-  packaging flow, deployed with a signed `CDEPLOY5` descriptor, and exercised
+  packaging flow, deployed with a signed `CDEPLOY6` descriptor, and exercised
   from the host by the pinned client codec.
 - **M3 - durable logs:** segmented storage with crash-recovery checks.
 - **M4 - replicated partitions:** followers, high watermark replication, and

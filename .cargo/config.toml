@@ -2,3 +2,8 @@
 # The pinned CharlotteOS dependency is a large repository; use the system git
 # for fetches so cargo does not depend on libgit2 network behavior.
 git-fetch-with-cli = true
+
+# Match CharlotteOS's required erasing POLYVAL owner for freestanding x86 EL0.
+# A cfg selector also covers the platform builder's generated target filename.
+[target.'cfg(all(target_arch = "x86_64", target_os = "none"))']
+rustflags = ["--cfg", "polyval_force_soft"]

@@ -11,3 +11,6 @@
 
 # Python load-client environment
 /tools/soak/.venv/
+
+# Python tooling regression tests
+/tools/tests/__pycache__/

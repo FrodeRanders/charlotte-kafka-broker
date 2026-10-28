@@ -32,7 +32,7 @@ deployment handoff. Preserve that separation:
    repository and adopted here by bumping the pinned revision.
 2. Never stage artifacts into a CharlotteOS service bundle or rely on
    `BOOTSTRAP_ELFS`. Bootstrap embedding is an OS bring-up mechanism; this
-   application deploys through a signed `CDEPLOY5` descriptor.
+   application deploys through a signed `CDEPLOY6` descriptor.
 3. The host development loop must work without a CharlotteOS checkout. Only
    cargo and the pinned crate revisions may be required for `cargo test`.
 4. The product of this repository is a signed ELF plus descriptor inputs

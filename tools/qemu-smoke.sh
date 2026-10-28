@@ -32,15 +32,18 @@ if [ ! -x "$OS_DIR/scripts/run-aarch64.sh" ]; then
     exit 1
 fi
 
+# Platform runners own generated OS artifacts; isolate those writes here.
+OS_DIR="$("$BROKER_ROOT/tools/charlotte-sdk.sh" runner-os "$OS_DIR")"
+
 APP_HOST_PORT="${CATTEN_APP_HOST_PORT:-19099}"
 TIMEOUT="${CATTEN_QEMU_TIMEOUT:-480}"
 LOG="$BROKER_ROOT/target/qemu-smoke.log"
-RESULT_FILE="$OS_DIR/target/deployment-ingress-test/result"
 
-"$BROKER_ROOT/tools/build-elf.sh"
+BROKER_ADVERTISE_HOST=127.0.0.1 BROKER_ADVERTISE_PORT="$APP_HOST_PORT" \
+    "$BROKER_ROOT/tools/build-elf.sh"
 "$BROKER_ROOT/tools/package.sh" sign
-rm -f "$RESULT_FILE"
 
+: >"$LOG"
 echo ">>> booting one guest and deploying broker (log: $LOG)"
 CATTEN_DEPLOY_NAME=broker \
 CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
@@ -64,7 +67,7 @@ cleanup() {
 trap cleanup EXIT
 
 deadline=$((SECONDS + TIMEOUT))
-while [ ! -f "$RESULT_FILE" ]; do
+while ! broker_deployment_ready "$OS_DIR" "$LOG"; do
     if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
         echo "error: QEMU runner exited before readiness; tail of $LOG:" >&2
         tail -40 "$LOG" >&2 || true

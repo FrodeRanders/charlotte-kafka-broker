@@ -96,7 +96,7 @@ compression, record headers, and dynamic topic creation.
 - [x] `broker-engine`: dispatch and per-partition error mapping
 - [x] Host TCP front end and `charlotte-kafka` conformance tests
 - [x] `broker-el0` builds and signs through the platform tooling
-- [x] EL0 execution under QEMU and deployment through a `CDEPLOY5` descriptor
+- [x] EL0 execution under QEMU and deployment through a `CDEPLOY6` descriptor
       (AArch64 and x86_64 guests)
 - [x] Bounded per-partition retention and an independent kafka-python load client
 - [ ] Client-side connector interop (requires a TLS listener decision)
@@ -123,7 +123,7 @@ tools/package.sh sign
 ```
 
 With Docker and QEMU available, `tools/qemu-smoke.sh` deploys the signed image
-into a single-guest cluster through the signed `CDEPLOY5` path and runs the
+into a single-guest cluster through the signed `CDEPLOY6` path and runs the
 host Kafka-subset smoke client against it:
 
 ```sh
@@ -162,7 +162,7 @@ stage-by-stage commands are in
 | Compile | This repository, read-only OS platform spec | `target/elf/broker.elf` (M2) |
 | Package and sign | This repository's parameters, OS `cluster-sign` | CLS2-signed ELF and its SHA-256 |
 | Upload | Operator or CI | Immutable bytes in the central store |
-| Deploy | OS `deployd`/`agent` via signed `CDEPLOY5` | Placed, launched, generation-fenced instance |
+| Deploy | OS `deployd`/`agent` via signed `CDEPLOY6` | Placed, launched, generation-fenced instance |
 
 Two rules follow from this boundary. This repository never edits a CharlotteOS
 checkout or stages files into its bundle, and every platform gap is fixed in

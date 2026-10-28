@@ -337,7 +337,7 @@ fn accept_loop(
                 return request;
             }
             let result = match listener
-                .call(socket::OP_ACCEPT, listener.id())
+                .call(socket::OP_TRY_ACCEPT, listener.id())
                 .and_then(|call| call.wait())
             {
                 Ok(result) => result.result,
