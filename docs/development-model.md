@@ -47,8 +47,8 @@ Hard rules:
 
 | Contract element | Source | Pinned by |
 |---|---|---|
-| CharlotteOS crates (`catten-rt`, `charlotte-launch`, protocols, `charlotte-kafka`) | OS repository | immutable platform tag in the root `Cargo.toml` |
-| Sitas runtime | Sitas repository | repository tag in the root `Cargo.toml` |
+| CharlotteOS crates (`catten-rt`, `charlotte-launch`, protocols, `charlotte-kafka`) | OS repository | immutable git revision in the root `Cargo.toml` |
+| Sitas runtime | Sitas repository | immutable git revision in the root `Cargo.toml` |
 | Platform tooling (builder, SDK export, signer) | OS repository | `charlotte.lock` |
 | Toolchain | OS repository | `rust-toolchain.toml` and `charlotte.lock` |
 | Machine image layout | `crates/catten-services/aarch64-unknown-none.json` and `link.x` | OS checkout revision |
@@ -57,12 +57,11 @@ Hard rules:
 | Runtime authority | Launch page v2, typed manifest, capability vector, `grantctl` | OS checkout revision |
 | Wire versions | `charlotte-kafka` version table | OS checkout revision |
 
-The platform is consumed through an immutable git tag
-(`app-platform-81d5064a`), with the exact revision also recorded in
-`charlotte.lock`; the committed `Cargo.lock` resolves the tag to its commit.
-`tools/charlotte-sdk.sh` verifies a checkout or an exported SDK against the
-lock before use, so the crate pin and the platform tooling cannot silently
-diverge. Tags are never moved; a platform change creates a new tag.
+The platform crates and tooling pin CharlotteOS revision
+`9f3d5203e4604c3113afb07e25b28ef6cd0db48c`; Sitas pins
+`d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78`. The committed `Cargo.lock`
+resolves these immutable revisions. `charlotte.lock` records the same inputs
+for platform resolution. The Rust toolchain remains `nightly-2026-07-27`.
 
 Authoritative OS references: `docs/guides/userspace-development.md`,
 `docs/reference/deployment-ingress.md`,

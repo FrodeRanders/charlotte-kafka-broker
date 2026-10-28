@@ -18,13 +18,13 @@ broker-core = { path = "crates/broker-core" }
 broker-engine = { path = "crates/broker-engine" }
 broker-runtime = { path = "crates/broker-runtime" }
 broker-wire = { path = "crates/broker-wire" }
-catten-rt = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-bc04d048" }
-catten-services = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-bc04d048" }
-charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-bc04d048" }
-charlotte-launch = { git = "https://github.com/FrodeRanders/charlotte-os", tag = "app-platform-bc04d048" }
-sitas-charlotte = { git = "https://github.com/FrodeRanders/sitas", tag = "charlotte-x86-64-2c0f800", default-features = false }
-sitas-core = { git = "https://github.com/FrodeRanders/sitas", tag = "charlotte-x86-64-2c0f800", default-features = false }
-sitas-unix = { git = "https://github.com/FrodeRanders/sitas", tag = "charlotte-x86-64-2c0f800" }
+catten-rt = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "9f3d5203e4604c3113afb07e25b28ef6cd0db48c" }
+catten-services = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "9f3d5203e4604c3113afb07e25b28ef6cd0db48c" }
+charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "9f3d5203e4604c3113afb07e25b28ef6cd0db48c" }
+charlotte-launch = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "9f3d5203e4604c3113afb07e25b28ef6cd0db48c" }
+sitas-charlotte = { git = "https://github.com/FrodeRanders/sitas", rev = "d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78", default-features = false }
+sitas-core = { git = "https://github.com/FrodeRanders/sitas", rev = "d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78", default-features = false }
+sitas-unix = { git = "https://github.com/FrodeRanders/sitas", rev = "d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78" }
 
 
 # Match the CharlotteOS workspace code generation for EL0 service images.
