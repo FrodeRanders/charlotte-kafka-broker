@@ -172,7 +172,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "catten-graft"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "catten-rt",
  "catten-syscall",
@@ -183,7 +183,7 @@ dependencies = [
 [[package]]
 name = "catten-rt"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "catten-syscall",
  "charlotte-launch",
@@ -196,13 +196,14 @@ dependencies = [
 [[package]]
 name = "catten-services"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "aes",
  "aes-gcm",
  "catten-graft",
  "catten-rt",
  "catten-syscall",
+ "charlotte-app",
  "charlotte-authorization",
  "charlotte-kafka",
  "charlotte-kafka-step",
@@ -212,6 +213,7 @@ dependencies = [
  "charlotte-protocol-disco",
  "charlotte-protocol-dns",
  "charlotte-protocol-fs",
+ "charlotte-protocol-grant",
  "charlotte-protocol-kafka",
  "charlotte-protocol-msg",
  "charlotte-protocol-net",
@@ -236,7 +238,7 @@ dependencies = [
 [[package]]
 name = "catten-syscall"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "cc"
@@ -278,14 +280,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "charlotte-app"
+version = "0.1.0"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
+dependencies = [
+ "catten-rt",
+ "charlotte-launch",
+ "charlotte-protocol-grant",
+ "charlotte-protocol-kafka",
+ "charlotte-protocol-s3",
+]
+
+[[package]]
 name = "charlotte-authorization"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-kafka"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "charlotte-launch",
  "zeroize",
@@ -294,7 +308,7 @@ dependencies = [
 [[package]]
 name = "charlotte-kafka-step"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "charlotte-launch",
  "charlotte-protocol-kafka",
@@ -303,7 +317,7 @@ dependencies = [
 [[package]]
 name = "charlotte-launch"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "curve25519-dalek 5.0.0",
  "ed25519-compact",
@@ -316,12 +330,12 @@ dependencies = [
 [[package]]
 name = "charlotte-lifecycle"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-management-tls"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -337,27 +351,35 @@ dependencies = [
 [[package]]
 name = "charlotte-protocol-block"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-protocol-disco"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-protocol-dns"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-protocol-fs"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
+
+[[package]]
+name = "charlotte-protocol-grant"
+version = "0.1.0"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
+dependencies = [
+ "charlotte-launch",
+]
 
 [[package]]
 name = "charlotte-protocol-kafka"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "charlotte-launch",
  "zeroize",
@@ -366,27 +388,27 @@ dependencies = [
 [[package]]
 name = "charlotte-protocol-msg"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-protocol-net"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-protocol-ns"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-protocol-objstore"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-protocol-s3"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "zeroize",
 ]
@@ -394,12 +416,12 @@ dependencies = [
 [[package]]
 name = "charlotte-protocol-time"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 
 [[package]]
 name = "charlotte-s3"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "charlotte-launch",
  "charlotte-protocol-s3",
@@ -409,7 +431,7 @@ dependencies = [
 [[package]]
 name = "charlotte-smoltcp"
 version = "0.1.0"
-source = "git+https://github.com/FrodeRanders/charlotte-os?rev=9f3d5203e4604c3113afb07e25b28ef6cd0db48c#9f3d5203e4604c3113afb07e25b28ef6cd0db48c"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "catten-syscall",
  "charlotte-protocol-net",
@@ -766,7 +788,7 @@ dependencies = [
 [[package]]
 name = "embedded-tls"
 version = "0.19.0"
-source = "git+https://github.com/embassy-rs/embedded-tls?rev=6487c62bb084c33361822022e21836ddfd48388f#6487c62bb084c33361822022e21836ddfd48388f"
+source = "git+https://github.com/FrodeRanders/charlotte-os?rev=981f9cea767cba3045bfd78264392068c81285f3#981f9cea767cba3045bfd78264392068c81285f3"
 dependencies = [
  "der",
  "embassy-crypto",
@@ -1304,7 +1326,7 @@ dependencies = [
 [[package]]
 name = "sitas-charlotte"
 version = "0.2.0"
-source = "git+https://github.com/FrodeRanders/sitas?rev=d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78#d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78"
+source = "git+https://github.com/FrodeRanders/sitas?rev=6d63266eb52492c1958c45f3ed71c8c7a451489a#6d63266eb52492c1958c45f3ed71c8c7a451489a"
 dependencies = [
  "sitas-core",
  "spin 0.9.9",
@@ -1313,7 +1335,7 @@ dependencies = [
 [[package]]
 name = "sitas-core"
 version = "0.2.0"
-source = "git+https://github.com/FrodeRanders/sitas?rev=d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78#d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78"
+source = "git+https://github.com/FrodeRanders/sitas?rev=6d63266eb52492c1958c45f3ed71c8c7a451489a#6d63266eb52492c1958c45f3ed71c8c7a451489a"
 dependencies = [
  "spin 0.9.9",
 ]
@@ -1321,7 +1343,7 @@ dependencies = [
 [[package]]
 name = "sitas-unix"
 version = "0.2.0"
-source = "git+https://github.com/FrodeRanders/sitas?rev=d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78#d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78"
+source = "git+https://github.com/FrodeRanders/sitas?rev=6d63266eb52492c1958c45f3ed71c8c7a451489a#6d63266eb52492c1958c45f3ed71c8c7a451489a"
 dependencies = [
  "sitas-core",
 ]

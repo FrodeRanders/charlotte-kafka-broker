@@ -4,8 +4,8 @@
 # Sitas must match runtime ABI 3.
 # tools/charlotte-sdk.sh verifies it for a checkout and for an exported SDK.
 OS_REPOSITORY=https://github.com/FrodeRanders/charlotte-os
-OS_REVISION=9f3d5203e4604c3113afb07e25b28ef6cd0db48c
+OS_REVISION=981f9cea767cba3045bfd78264392068c81285f3
 SITAS_REPOSITORY=https://github.com/FrodeRanders/sitas
-SITAS_REVISION=d27f7e7b7a6e3657c9b39e53da02cf0cd8f91a78
+SITAS_REVISION=6d63266eb52492c1958c45f3ed71c8c7a451489a
 TOOLCHAIN=nightly-2026-07-27
 SDK_SCHEMA=1
