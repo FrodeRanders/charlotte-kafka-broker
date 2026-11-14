@@ -47,7 +47,8 @@ pub(crate) fn spawn_partition_shard<R>(
     receiver: ShardReceiver<PartitionCommand>,
     park_timeout: Duration,
     partition_max_bytes: Option<usize>,
-) where
+) -> R::JoinHandle<()>
+where
     R: ShardRuntime + ?Sized,
 {
     let reactor = runtime.shard_reactor(shard_id);
@@ -59,7 +60,7 @@ pub(crate) fn spawn_partition_shard<R>(
             executor.spawn(partition_task(receiver, catalog, parker, partition_max_bytes));
             executor.run();
         }),
-    );
+    )
 }
 
 async fn partition_task(

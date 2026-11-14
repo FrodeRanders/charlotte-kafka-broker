@@ -11,3 +11,4 @@ bench = false
 [dependencies]
 broker-core.workspace = true
 sitas-core.workspace = true
+spin.workspace = true

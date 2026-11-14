@@ -1,11 +1,10 @@
 # Pinned CharlotteOS platform inputs for the out-of-tree build.
 #
-# The revision is the same one pinned by the root Cargo.toml git dependencies.
-# Sitas must match runtime ABI 3.
-# tools/charlotte-sdk.sh verifies it for a checkout and for an exported SDK.
+# All platform crates, build inputs and host backends come from this source SDK.
+# tools/charlotte-sdk.sh checks its revision, schema, toolchain and exact hashes.
 OS_REPOSITORY=https://github.com/FrodeRanders/charlotte-os
 OS_REVISION=981f9cea767cba3045bfd78264392068c81285f3
 SITAS_REPOSITORY=https://github.com/FrodeRanders/sitas
 SITAS_REVISION=6d63266eb52492c1958c45f3ed71c8c7a451489a
 TOOLCHAIN=nightly-2026-07-27
-SDK_SCHEMA=1
+SDK_SCHEMA=2

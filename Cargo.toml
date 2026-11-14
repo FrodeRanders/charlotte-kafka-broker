@@ -1,5 +1,21 @@
 [workspace]
 members = ["crates/*"]
+# SDK sources remain a separate workspace with their own formatting and tests.
+exclude = [
+    ".charlotte/sdk/charlotte-app-sdk/crates/catten-rt",
+    ".charlotte/sdk/charlotte-app-sdk/crates/catten-syscall",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-app",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-app-sitas",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-kafka",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-launch",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-lifecycle",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-protocol-grant",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-protocol-kafka",
+    ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-protocol-s3",
+    ".charlotte/sdk/charlotte-app-sdk/crates/sitas-charlotte",
+    ".charlotte/sdk/charlotte-app-sdk/crates/sitas-core",
+    ".charlotte/sdk/charlotte-app-sdk/crates/sitas-unix",
+]
 default-members = [
     "crates/broker-core",
     "crates/broker-engine",
@@ -18,14 +34,14 @@ broker-core = { path = "crates/broker-core" }
 broker-engine = { path = "crates/broker-engine" }
 broker-runtime = { path = "crates/broker-runtime" }
 broker-wire = { path = "crates/broker-wire" }
-catten-rt = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "981f9cea767cba3045bfd78264392068c81285f3" }
-catten-services = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "981f9cea767cba3045bfd78264392068c81285f3" }
-charlotte-kafka = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "981f9cea767cba3045bfd78264392068c81285f3" }
-charlotte-launch = { git = "https://github.com/FrodeRanders/charlotte-os", rev = "981f9cea767cba3045bfd78264392068c81285f3" }
-sitas-charlotte = { git = "https://github.com/FrodeRanders/sitas", rev = "6d63266eb52492c1958c45f3ed71c8c7a451489a", default-features = false }
-sitas-core = { git = "https://github.com/FrodeRanders/sitas", rev = "6d63266eb52492c1958c45f3ed71c8c7a451489a", default-features = false }
-sitas-unix = { git = "https://github.com/FrodeRanders/sitas", rev = "6d63266eb52492c1958c45f3ed71c8c7a451489a" }
-
+catten-rt = { path = ".charlotte/sdk/charlotte-app-sdk/crates/catten-rt" }
+charlotte-app = { path = ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-app", features = ["socket"] }
+charlotte-launch = { path = ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-launch" }
+charlotte-kafka = { path = ".charlotte/sdk/charlotte-app-sdk/crates/charlotte-kafka" }
+sitas-core = { path = ".charlotte/sdk/charlotte-app-sdk/crates/sitas-core", default-features = false }
+sitas-charlotte = { path = ".charlotte/sdk/charlotte-app-sdk/crates/sitas-charlotte", default-features = false }
+sitas-unix = { path = ".charlotte/sdk/charlotte-app-sdk/crates/sitas-unix" }
+spin = "0.9"
 
 # Match the CharlotteOS workspace code generation for EL0 service images.
 [profile.release]

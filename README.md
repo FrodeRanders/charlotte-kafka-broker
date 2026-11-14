@@ -82,7 +82,7 @@ compression, record headers, and dynamic topic creation.
 
 | Tooling | Purpose |
 |---|---|
-| `charlotte.lock` | Pinned CharlotteOS repository, revision, and toolchain |
+| `charlotte.lock` | Pinned source SDK, OS/Sitas revisions, schema and toolchain |
 | `tools/charlotte-sdk.sh` | Resolve a checkout or unpacked SDK, build `cluster-sign` |
 | `tools/build-elf.sh` | Build `broker-el0` through the platform builder |
 | `tools/package.sh` | Sign the artifact and print the deployment handoff |
@@ -106,8 +106,11 @@ compression, record headers, and dynamic topic creation.
 ## Build and test
 
 ```sh
-cargo fmt --all -- --check
+tools/charlotte-sdk.sh unpack /path/to/charlotte-app-sdk.tar.gz
+# Alternatively: tools/charlotte-sdk.sh use-os ../charlotte-os
+cargo fmt -- --check
 cargo test
+cargo test -p broker-el0
 cargo clippy --all-targets -- -D warnings
 cargo doc --no-deps
 cargo run --example host_broker   # TCP broker on 127.0.0.1:9092
@@ -124,7 +127,8 @@ tools/package.sh sign
 
 With Docker and QEMU available, `tools/qemu-smoke.sh` deploys the signed image
 into a single-guest cluster through the signed `CDEPLOY6` path and runs the
-host Kafka-subset smoke client against it:
+host Kafka-subset smoke client against it, then verifies cooperative broker
+shutdown and node poweroff:
 
 ```sh
 CHARLOTTE_OS_DIR=../charlotte-os tools/qemu-smoke.sh

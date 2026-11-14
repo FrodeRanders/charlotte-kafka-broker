@@ -77,31 +77,39 @@ Rules:
   re-checks on every wake because wakes may be coalesced or spurious;
 - every wait has a bounded retry budget so a dead shard produces an error
   instead of a hang;
-- shutdown is an explicit `Shutdown` command with an acknowledgement, not a
-  dropped channel;
+- shutdown sends an explicit `Shutdown` command, receives its acknowledgement,
+  then observes terminal worker exit and consumes the join handle;
 - the Sitas ring channels reserve one slot to distinguish full from empty, so
   a channel sized for `n` messages is created with `n + 1` slots.
 
-Placement is deterministic: `shard = hash(topic) + partition (mod shard_count)`.
-It is a pure function of the topic name and partition index, so every caller
-routes to the owner without shared routing state.
+Placement deterministically mixes the topic hash and partition index, then
+takes the result modulo the shard count. Every caller uses the same pure
+function to route to the owner without shared routing state.
 
 ### Session ownership
 
-Connection protocol state is a separate ownership concern from partition data.
-The EL0 listener assigns each accepted connection a `SessionId` and a stable
-session shard using a bounded deterministic layout. The session shard is the
-owner of that session's decoder buffer and, as those features arrive, its
-producer epoch, consumer cursor, and transaction handle. A session shard may
-send commands to any partition shard; it never mutates a partition log owned by
-another shard. The current EL0 implementation uses one handler thread per
-connection and pins it to the assigned logical session shard, while the host
-front end uses one native thread per connection. Deployments must budget enough
-threads for the partition shards and expected concurrent sessions; the soak
-runner uses the platform maximum of 64. Socket admission is also bounded by
-the shared tcpip service. A temporary socket or thread shortage is logged and
-retried at the EL0 accept boundary rather than treated as a broker-fatal
-protocol error.
+The EL0 adapter keeps up to eight sessions in one CQ-zero network loop. Each
+session owns its accepted call, socket, frame buffer, response prefix and original
+request deadline. The TCP/IP connection remains owned in the enclosing
+application scope, so sockets borrow it without a process-lifetime leak or
+`'static` thread handoff. The existing service's listener becomes the accepted
+socket; a new listener is created while session capacity remains.
+
+Receive and deferred-send calls are CQ-bound and polled through their owners.
+One incomplete frame does not block other sessions. Only an observed positive
+send-prefix receipt advances output; a local deadline closes the session without
+replaying an accepted send. Frame size, session count and buffer growth are
+bounded. One idle/partial request has a 30-second budget; completing its response
+starts the next operation budget. Synchronous business dispatch still uses the
+portable broker's bounded mailbox/reply policy and can occupy the network thread.
+
+Partition workers retain their actual Sitas join handles. Shutdown first closes
+network scopes, then sends partition shutdown commands, observes acknowledgements
+and joins the exited workers. An acknowledgement does not prove thread exit.
+Failed shutdown stays fenced; EL0 aborts with its engine owners retained instead
+of acknowledging successful drain. Host Drop retains unjoined handles on an
+uncertain failure. Worker admission at mandatory startup follows Sitas' terminal
+rejection policy; session traffic creates no additional threads.
 
 Session affinity must not be confused with logical Kafka identity. A TCP
 connection is disposable; a reconnecting producer or transaction may retain a
@@ -261,13 +269,14 @@ boundary, ownership matrix, and stage commands are in
   `AddOffsetsToTxn` v0 and `TxnOffsetCommit` v3; these remain outside the
   current advertised subset.
 
-The EL0 platform contract pins CharlotteOS runtime ABI 3 and the matching Sitas
-checked CQ waits. The accept loop uses `OP_TRY_ACCEPT`, whose would-block reply
-lets the existing bounded sleep/recheck path observe shutdown while idle.
-`OP_ACCEPT` is now deferred and must be combined with lifecycle CQ readiness
-before replacing this polling path. Deployment uses architecture-aware
-`CDEPLOY6` descriptors. See [development model](development-model.md) for pins,
-key-file signing, and management mTLS inputs.
+The EL0 platform contract pins CharlotteOS runtime ABI 3 and the hardened
+Sitas backend through one exported SDK. `Application` borrows launch authority,
+acquires the signed `tcpip` grant and publishes readiness after the first listener
+is bound. The returning entry wrapper acknowledges shutdown after the network
+scope and partition joins complete. An idle `OP_ACCEPT` waits on CQ readiness
+and authenticated lifecycle publication, with no 25 ms accept poll. Descriptors
+remain architecture-aware `CDEPLOY6`. See [development model](development-model.md)
+for SDK inputs, key-file signing, management mTLS and deployment boundaries.
 
 ## 9. Open questions
 

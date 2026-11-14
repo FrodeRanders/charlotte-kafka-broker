@@ -12,6 +12,10 @@ use broker_core::{
 pub enum BrokerError {
     /// The broker configuration is inconsistent.
     InvalidConfig,
+    /// Shutdown is in progress or an earlier uncertain shutdown is fenced.
+    ShutdownIncomplete,
+    /// A terminated worker failed to return normally.
+    WorkerFailed,
     /// A shard mailbox stayed full or closed for the whole retry budget.
     MailboxUnavailable,
     /// A shard did not answer within the retry budget.
@@ -33,6 +37,8 @@ impl From<LogError> for BrokerError {
 impl fmt::Display for BrokerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ShutdownIncomplete => write!(f, "shutdown incomplete"),
+            Self::WorkerFailed => write!(f, "worker failed"),
             Self::InvalidConfig => write!(f, "invalid broker configuration"),
             Self::MailboxUnavailable => write!(f, "shard mailbox unavailable"),
             Self::ReplyTimeout => write!(f, "shard reply timed out"),

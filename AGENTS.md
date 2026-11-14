@@ -33,8 +33,8 @@ deployment handoff. Preserve that separation:
 2. Never stage artifacts into a CharlotteOS service bundle or rely on
    `BOOTSTRAP_ELFS`. Bootstrap embedding is an OS bring-up mechanism; this
    application deploys through a signed `CDEPLOY6` descriptor.
-3. The host development loop must work without a CharlotteOS checkout. Only
-   cargo and the pinned crate revisions may be required for `cargo test`.
+3. The host development loop must work without a CharlotteOS checkout. Resolve the pinned SDK once; thereafter
+   `cargo test` needs cargo and those SDK source crates, not an OS checkout.
 4. The product of this repository is a signed ELF plus descriptor inputs
    (placement, limits, grants). The operator or CI uploads the immutable
    bytes; CharlotteOS admits, places, and launches them.
@@ -62,9 +62,10 @@ and updates `docs/architecture.md` at the same time.
 8. Every reply channel is bounded and every wait has a bounded retry budget.
 9. Values that cross a shard boundary are owned; borrowed record data never
    outlives the command that carried it.
-10. The dependencies are pinned by revision. `charlotte.lock` pins the same
-    CharlotteOS revision as the root `Cargo.toml`; update them deliberately and
-    in their own change.
+10. `charlotte.lock` pins the OS/Sitas revisions, SDK schema and toolchain.
+    Workspace platform dependencies use only `.charlotte/sdk/charlotte-app-sdk`;
+    never mix Git and SDK instances of the same platform crate. Change the
+    reviewed platform pin deliberately, separately from implementation changes.
 
 ## Coding rules
 
@@ -82,8 +83,10 @@ and updates `docs/architecture.md` at the same time.
 Run the narrowest relevant tests first, then broaden:
 
 ```bash
-cargo fmt --all -- --check
+tools/charlotte-sdk.sh verify
+cargo fmt -- --check
 cargo test
+cargo test -p broker-el0
 cargo clippy --all-targets -- -D warnings
 cargo doc --no-deps
 ```

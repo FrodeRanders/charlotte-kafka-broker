@@ -15,6 +15,9 @@ class PlatformTest(unittest.TestCase):
         (self.root / ".charlotte").mkdir()
         self.platform = self.root / "tools/platform.sh"
         shutil.copyfile(Path(__file__).resolve().parents[1] / "platform.sh", self.platform)
+        verifier = self.root / "tools/charlotte-sdk.sh"
+        verifier.write_text('#!/bin/sh\ntest "$1" = verify\n')
+        verifier.chmod(0o755)
         (self.root / "charlotte.lock").write_text("OS_REVISION=current\nTOOLCHAIN=nightly-test\n")
         self.environment = self.root / ".charlotte/platform.env"
         self.environment.write_text(

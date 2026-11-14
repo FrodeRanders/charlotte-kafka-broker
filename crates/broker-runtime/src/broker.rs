@@ -6,12 +6,13 @@
 //! parking between polls.
 
 use alloc::{
+    boxed::Box,
     sync::Arc,
     vec::Vec,
 };
 use core::{
     sync::atomic::{
-        AtomicBool,
+        AtomicU8,
         Ordering,
     },
     time::Duration,
@@ -123,7 +124,8 @@ pub struct Broker {
     parker: Arc<dyn ShardParker>,
     park_timeout: Duration,
     max_retries: u32,
-    stopped: AtomicBool,
+    state: AtomicU8,
+    workers: crate::workers::Workers,
 }
 
 impl Broker {
@@ -150,11 +152,23 @@ impl Broker {
         let parker = runtime.parker();
 
         let mut shards = Vec::with_capacity(config.shard_count);
-        for index in 0..config.shard_count {
+        let mut prepared = Vec::with_capacity(config.shard_count);
+        let mut workers: Vec<Box<dyn crate::workers::Worker>> =
+            Vec::with_capacity(config.shard_count);
+        for _ in 0..config.shard_count {
             let (sender, receiver) = channel(queue_capacity(config.mailbox_capacity))
                 .map_err(|_| BrokerError::InvalidConfig)?;
             shards.push(sender);
-            spawn_partition_shard(
+            prepared.push((
+                receiver,
+                Box::new(crate::workers::Slot::<R::JoinHandle<()>> {
+                    handle: None,
+                }),
+            ));
+        }
+        // Prepare channels and join storage before publishing any worker.
+        for (index, (receiver, mut worker)) in prepared.into_iter().enumerate() {
+            worker.handle = Some(spawn_partition_shard(
                 runtime,
                 ShardId(index),
                 Arc::clone(&catalog),
@@ -162,7 +176,8 @@ impl Broker {
                 receiver,
                 config.park_timeout,
                 config.partition_max_bytes,
-            );
+            ));
+            workers.push(worker);
         }
 
         Ok(Self {
@@ -171,7 +186,8 @@ impl Broker {
             parker,
             park_timeout: config.park_timeout,
             max_retries: config.max_retries,
-            stopped: AtomicBool::new(false),
+            state: AtomicU8::new(0),
+            workers: crate::workers::Workers(spin::Mutex::new(workers)),
         })
     }
 
@@ -508,14 +524,29 @@ impl Broker {
         (mixed % self.shards.len() as u64) as usize
     }
 
-    /// Stops every shard and waits for its acknowledgement.
+    /// Stops every shard, receives its acknowledgement, and joins its worker.
     ///
-    /// Shutdown is idempotent; a second call is a no-op.
+    /// Repeated successful shutdown is a no-op. Concurrent or failed shutdown
+    /// stays fenced and returns [`BrokerError::ShutdownIncomplete`].
     pub fn shutdown(&self) -> Result<(), BrokerError> {
-        if self.stopped.swap(true, Ordering::AcqRel) {
-            return Ok(());
+        match self.state.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => {}
+            Err(2) => return Ok(()),
+            Err(_) => return Err(BrokerError::ShutdownIncomplete),
         }
+        let result = self.stop_and_join();
+        self.state.store(
+            if result.is_ok() {
+                2
+            } else {
+                3
+            },
+            Ordering::Release,
+        );
+        result
+    }
 
+    fn stop_and_join(&self) -> Result<(), BrokerError> {
         let capacity = queue_capacity(self.shards.len());
         let (ack_sender, mut ack_receiver) =
             channel(capacity).map_err(|_| BrokerError::InvalidConfig)?;
@@ -543,7 +574,13 @@ impl Broker {
                 _ => return Err(BrokerError::UnexpectedReply),
             }
         }
-        Ok(())
+        for _ in 0..self.max_retries.max(1) {
+            if self.workers.join_ready()? {
+                return Ok(());
+            }
+            self.parker.park(Some(self.park_timeout));
+        }
+        Err(BrokerError::ReplyTimeout)
     }
 
     fn call<F>(
@@ -555,6 +592,9 @@ impl Broker {
     where
         F: FnOnce(ShardSender<PartitionResult>) -> PartitionCommand,
     {
+        if self.state.load(Ordering::Acquire) != 0 {
+            return Err(BrokerError::ShutdownIncomplete);
+        }
         let shard = self.shard_index(topic, partition);
         let (reply_sender, mut reply_receiver) =
             channel(queue_capacity(1)).map_err(|_| BrokerError::InvalidConfig)?;
@@ -569,6 +609,9 @@ impl Broker {
     }
 
     fn coordinate(&self, request: CoordinationRequest) -> Result<CoordinationResult, BrokerError> {
+        if self.state.load(Ordering::Acquire) != 0 {
+            return Err(BrokerError::ShutdownIncomplete);
+        }
         let (reply_sender, mut reply_receiver) =
             channel(queue_capacity(1)).map_err(|_| BrokerError::InvalidConfig)?;
         send_coordination_with_retry(
@@ -621,7 +664,10 @@ fn send_coordination_with_retry(
 
 impl Drop for Broker {
     fn drop(&mut self) {
-        let _ = self.shutdown();
+        if self.shutdown().is_err() {
+            self.workers.retain();
+            core::mem::forget(core::mem::take(&mut self.shards));
+        }
     }
 }
 
@@ -679,4 +725,47 @@ fn splitmix64(mut value: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    extern crate std;
+    use sitas_core::shard_runtime::ShardThread;
+
+    use super::*;
+    struct Parker;
+    impl ShardParker for Parker {
+        fn park(&self, _: Option<Duration>) {}
+
+        fn unpark(&self) {}
+    }
+    struct PendingWorker;
+    impl ShardThread<()> for PendingWorker {
+        fn is_finished(&self) -> bool {
+            false
+        }
+
+        fn join(self) -> Result<(), Box<dyn core::error::Error + Send + Sync>> {
+            panic!("unconfirmed worker was joined")
+        }
+    }
+    #[test]
+    fn failed_shutdown_stays_fenced_with_its_unjoined_worker() {
+        let (sender, _receiver) = channel(queue_capacity(1)).unwrap();
+        let worker: Box<dyn crate::workers::Worker> = Box::new(crate::workers::Slot {
+            handle: Some(PendingWorker),
+        });
+        let broker = Broker {
+            shards: alloc::vec![sender],
+            catalog: Arc::new(TopicCatalog::new()),
+            parker: Arc::new(Parker),
+            park_timeout: Duration::ZERO,
+            max_retries: 1,
+            state: AtomicU8::new(0),
+            workers: crate::workers::Workers(spin::Mutex::new(alloc::vec![worker])),
+        };
+        assert_eq!(broker.shutdown(), Err(BrokerError::ReplyTimeout));
+        assert_eq!(broker.shutdown(), Err(BrokerError::ShutdownIncomplete));
+        assert_eq!(broker.workers.0.lock().len(), 1);
+    }
 }

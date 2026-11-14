@@ -45,6 +45,7 @@ BROKER_ADVERTISE_HOST=127.0.0.1 BROKER_ADVERTISE_PORT="$APP_HOST_PORT" \
 
 : >"$LOG"
 echo ">>> booting one guest and deploying broker (log: $LOG)"
+# Each smoke run starts a new appliance; an old catalog can retain shutdown intent.
 CATTEN_DEPLOY_NAME=broker \
 CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
 CATTEN_DEPLOY_OBJECT_KEY=deployments/broker.elf \
@@ -54,8 +55,8 @@ CATTEN_DEPLOY_GRACE_MS=5000 \
 CATTEN_DEPLOY_GRANTS="tcpip=client broker=publish" \
 CATTEN_APP_HOST_PORT="$APP_HOST_PORT" \
 CATTEN_APP_GUEST_PORT=9092 \
-CATTEN_APP_HOLD_SECONDS="${CATTEN_APP_HOLD_SECONDS:-90}" \
-"$OS_DIR/scripts/run-aarch64.sh" debug --deployment-ingress-test --timeout "$TIMEOUT" \
+CATTEN_APP_HOLD_SECONDS="${CATTEN_APP_HOLD_SECONDS:-20}" \
+"$OS_DIR/scripts/run-aarch64.sh" debug --fresh-storage --deployment-ingress-test --shutdown-ingress-test --timeout "$TIMEOUT" \
     >"$LOG" 2>&1 &
 RUNNER_PID=$!
 
@@ -87,3 +88,9 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 sleep 2
 cargo run --quiet --example remote_smoke -- "127.0.0.1:$APP_HOST_PORT"
+
+# Let the runner submit its signed node shutdown after the host probe window.
+wait "$RUNNER_PID"
+trap - EXIT
+grep -Fq '[broker] partition workers joined; network scope released' "$LOG"
+echo '>>> cooperative broker drain and node poweroff verified'

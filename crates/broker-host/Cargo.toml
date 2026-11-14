@@ -17,3 +17,4 @@ broker-wire.workspace = true
 broker-core.workspace = true
 charlotte-kafka.workspace = true
 sitas-unix.workspace = true
+sitas-core.workspace = true

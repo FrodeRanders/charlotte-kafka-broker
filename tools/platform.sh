@@ -31,6 +31,8 @@ if [ "${CHARLOTTE_OS_REVISION:-}" != "$OS_REVISION" ] || \
     exit 1
 fi
 
+"$BROKER_ROOT/tools/charlotte-sdk.sh" verify >/dev/null
+
 # The pinned OS creates a unique run directory and prints the exact signed
 # descriptor path. Follow that run's result, never a stale result from a prior
 # deployment. Both broker runners deploy the logical artifact "broker".

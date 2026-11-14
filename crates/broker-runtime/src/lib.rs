@@ -20,6 +20,7 @@ mod error;
 mod message;
 mod partition;
 mod session;
+mod workers;
 
 pub use broker::{
     Broker,
