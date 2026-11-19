@@ -2,7 +2,7 @@
 name = "broker-host"
 version.workspace = true
 edition.workspace = true
-description = "Host TCP front end and conformance tests for the CharlotteOS Kafka broker"
+description = "Host TCP front end and conformance tests for the Knytos-based Kafka broker"
 
 [lib]
 test = true
@@ -15,6 +15,6 @@ broker-wire.workspace = true
 
 [dev-dependencies]
 broker-core.workspace = true
-charlotte-kafka.workspace = true
+knytos-kafka.workspace = true
 sitas-unix.workspace = true
 sitas-core.workspace = true

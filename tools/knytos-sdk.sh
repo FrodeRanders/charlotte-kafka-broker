@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Resolve one immutable CharlotteOS source SDK. All generated state is local.
+# Resolve one immutable Knytos source SDK. All generated state is local.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE="$ROOT/.charlotte"
+STATE="$ROOT/.knytos"
 ENV_FILE="$STATE/platform.env"
-. "$ROOT/charlotte.lock"
+. "$ROOT/knytos.lock"
 
 check_revision() {
     [ "$(git -C "$1" rev-parse HEAD)" = "$OS_REVISION" ] || {
-        echo "error: platform differs from charlotte.lock; adopt a reviewed pin first" >&2; exit 1;
+        echo "error: platform differs from knytos.lock; adopt a reviewed pin first" >&2; exit 1;
     }
 }
 write_env() {
     mkdir -p "$STATE"
-    local sdk="$STATE/sdk/charlotte-app-sdk"
+    local sdk="$STATE/sdk/knytos-app-sdk"
     {
-        printf 'CHARLOTTE_PLATFORM_KIND=%q\n' "$1"
-        printf 'CHARLOTTE_PLATFORM_ROOT=%q\n' "$2"
-        printf 'CHARLOTTE_SDK_ROOT=%q\n' "$sdk"
-        printf 'CHARLOTTE_BUILD_ELF=%q\n' "$sdk/build-external-elf.sh"
-        printf 'CHARLOTTE_SIGNER_MANIFEST=%q\n' "$STATE/signer/Cargo.toml"
-        printf 'CHARLOTTE_SIGNER_TARGET=%q\n' "$STATE/signer-target"
-        printf 'CHARLOTTE_KEYS_DIR=%q\n' "$sdk/keys"
-        printf 'CHARLOTTE_OS_REVISION=%q\n' "$OS_REVISION"
-        printf 'CHARLOTTE_TOOLCHAIN=%q\n' "$TOOLCHAIN"
+        printf 'KNYTOS_PLATFORM_KIND=%q\n' "$1"
+        printf 'KNYTOS_PLATFORM_ROOT=%q\n' "$2"
+        printf 'KNYTOS_SDK_ROOT=%q\n' "$sdk"
+        printf 'KNYTOS_BUILD_ELF=%q\n' "$sdk/build-external-elf.sh"
+        printf 'KNYTOS_SIGNER_MANIFEST=%q\n' "$STATE/signer/Cargo.toml"
+        printf 'KNYTOS_SIGNER_TARGET=%q\n' "$STATE/signer-target"
+        printf 'KNYTOS_KEYS_DIR=%q\n' "$sdk/keys"
+        printf 'KNYTOS_REVISION=%q\n' "$OS_REVISION"
+        printf 'KNYTOS_TOOLCHAIN=%q\n' "$TOOLCHAIN"
     } > "$ENV_FILE"
 }
 verify_sdk() {
@@ -31,10 +31,10 @@ verify_sdk() {
 from pathlib import Path
 import hashlib,json,sys
 sdk=Path(sys.argv[1]); lock=json.loads((sdk/'sdk.json').read_text())
-if (lock['os_revision'],lock['sitas_revision'],lock['toolchain'],str(lock['schema']))!=tuple(sys.argv[2:]): raise SystemExit('SDK differs from charlotte.lock')
+if (lock['os_revision'],lock['sitas_revision'],lock['toolchain'],str(lock['schema']))!=tuple(sys.argv[2:]): raise SystemExit('SDK differs from knytos.lock')
 for name,digest in lock['files'].items():
     if hashlib.sha256((sdk/name).read_bytes()).hexdigest()!=digest: raise SystemExit(f'SDK input differs: {name}')
-for name in ['charlotte-app','catten-rt','charlotte-launch','charlotte-kafka','sitas-core','sitas-charlotte','sitas-unix']:
+for name in ['knytos-app','knytos-rt','knytos-launch','knytos-kafka','sitas-core','sitas-knytos','sitas-unix']:
     if not (sdk/'crates'/name/'Cargo.toml').is_file(): raise SystemExit(f'missing SDK crate: {name}')
 PY
 }
@@ -43,7 +43,7 @@ unpack() {
 import hashlib,os,sys
 from pathlib import Path
 archive=Path(sys.argv[1]); sidecar=Path(str(archive)+'.sha256')
-expected=os.environ.get('CHARLOTTE_SDK_SHA256')
+expected=os.environ.get('KNYTOS_SDK_SHA256')
 if not expected and sidecar.exists(): expected=sidecar.read_text().split()[0]
 if expected and hashlib.sha256(archive.read_bytes()).hexdigest()!=expected: raise SystemExit('SDK tarball sha256 mismatch')
 PYHASH
@@ -51,11 +51,11 @@ PYHASH
     local stage
     stage="$(mktemp -d "$STATE/sdk-next.XXXXXX")"
     tar -xzf "$1" -C "$stage"
-    verify_sdk "$stage/charlotte-app-sdk"
+    verify_sdk "$stage/knytos-app-sdk"
     # Only generated SDK input is replaced; signer output lives elsewhere.
     rm -rf "$STATE/sdk"
     mv "$stage" "$STATE/sdk"
-    write_env sdk "$STATE/sdk/charlotte-app-sdk"
+    write_env sdk "$STATE/sdk/knytos-app-sdk"
 }
 use_os() {
     local source
@@ -69,16 +69,16 @@ use_os() {
 }
 fetch() {
     local root="$STATE/platform-source"
-    local os="$root/private/charlotte-os"
+    local os="$root/private/knytos"
     local sitas="$root/gautelis/sitas"
     mkdir -p "$root/private" "$root/gautelis"
     if [ ! -d "$os/.git" ]; then git clone --filter=blob:none --no-checkout "$OS_REPOSITORY" "$os"; fi
     git -C "$os" fetch origin "$OS_REVISION"
     git -C "$os" sparse-checkout init --cone
     git -C "$os" sparse-checkout set scripts tools/cluster-sign .github/workflows \
-        crates/catten-services crates/catten-rt crates/catten-syscall crates/charlotte-launch \
-        crates/charlotte-lifecycle crates/charlotte-app crates/charlotte-app-sitas \
-        crates/charlotte-kafka crates/charlotte-protocol-grant crates/charlotte-protocol-kafka crates/charlotte-protocol-s3
+        crates/knytos-services crates/knytos-rt crates/knytos-syscall crates/knytos-launch \
+        crates/knytos-lifecycle crates/knytos-app crates/knytos-app-sitas \
+        crates/knytos-kafka crates/knytos-protocol-grant crates/knytos-protocol-kafka crates/knytos-protocol-s3
     git -C "$os" checkout --detach "$OS_REVISION"
     if [ ! -d "$sitas/.git" ]; then git clone --filter=blob:none --no-checkout "$SITAS_REPOSITORY" "$sitas"; fi
     git -C "$sitas" fetch origin "$SITAS_REVISION"
@@ -94,13 +94,13 @@ worktree() {
     # Export uses the caller's read-only Sitas source at the pinned revision.
     local sitas_source="$source/../../gautelis/sitas"
     local tarball="$STATE/sdk-$OS_REVISION.tar.gz"
-    GIT_OPTIONAL_LOCKS=0 CHARLOTTE_SITAS_DIR="$sitas_source" "$destination/scripts/export-app-sdk.sh" --output "$tarball"
+    GIT_OPTIONAL_LOCKS=0 KNYTOS_SITAS_DIR="$sitas_source" "$destination/scripts/export-app-sdk.sh" --output "$tarball"
     unpack "$tarball"
 }
 runner_os() {
     local source="$1" root="$STATE/runner-$OS_REVISION"
     source="$(cd "$source" && pwd)"
-    local os="$root/private/charlotte-os" sitas="$root/gautelis/sitas"
+    local os="$root/private/knytos" sitas="$root/gautelis/sitas"
     mkdir -p "$root/private" "$root/gautelis"
     if [ ! -d "$os/.git" ]; then
         git clone --no-checkout --no-hardlinks "$source" "$os" >&2
@@ -108,7 +108,7 @@ runner_os() {
     fi
     check_revision "$os"
     if [ ! -d "$sitas/.git" ]; then
-        local input="${CHARLOTTE_SITAS_DIR:-$source/../../gautelis/sitas}"
+        local input="${KNYTOS_SITAS_DIR:-$source/../../gautelis/sitas}"
         [ -d "$input/.git" ] || input="$SITAS_REPOSITORY"
         git clone --no-checkout --no-hardlinks "$input" "$sitas" >&2
         git -C "$sitas" checkout --detach "$SITAS_REVISION" >&2
@@ -119,26 +119,26 @@ runner_os() {
 load() {
     [ -f "$ENV_FILE" ] || { echo "error: resolve an SDK with use-os, fetch or unpack" >&2; exit 1; }
     . "$ENV_FILE"
-    [ "$CHARLOTTE_OS_REVISION" = "$OS_REVISION" ] && [ "$CHARLOTTE_TOOLCHAIN" = "$TOOLCHAIN" ] || {
+    [ "$KNYTOS_REVISION" = "$OS_REVISION" ] && [ "$KNYTOS_TOOLCHAIN" = "$TOOLCHAIN" ] || {
         echo "error: stale platform resolution" >&2; exit 1;
     }
-    verify_sdk "$CHARLOTTE_SDK_ROOT"
+    verify_sdk "$KNYTOS_SDK_ROOT"
 }
 build_signer() {
     load
     local fingerprint
-    fingerprint="$(python3 - "$CHARLOTTE_SDK_ROOT/sdk.json" <<'PY'
+    fingerprint="$(python3 - "$KNYTOS_SDK_ROOT/sdk.json" <<'PY'
 import hashlib,sys
 print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())
 PY
 )"
     if [ ! -f "$STATE/signer-input" ] || [ "$(cat "$STATE/signer-input")" != "$fingerprint" ]; then
         rm -rf "$STATE/signer"
-        cp -R "$CHARLOTTE_SDK_ROOT/signer" "$STATE/signer"
+        cp -R "$KNYTOS_SDK_ROOT/signer" "$STATE/signer"
         printf '%s\n' "$fingerprint" > "$STATE/signer-input"
     fi
-    (cd "$ROOT" && cargo "+$TOOLCHAIN" build --manifest-path "$CHARLOTTE_SIGNER_MANIFEST" --target-dir "$CHARLOTTE_SIGNER_TARGET")
-    printf 'CHARLOTTE_CLUSTER_SIGN=%q\n' "$CHARLOTTE_SIGNER_TARGET/debug/cluster-sign" >> "$ENV_FILE"
+    (cd "$ROOT" && cargo "+$TOOLCHAIN" build --manifest-path "$KNYTOS_SIGNER_MANIFEST" --target-dir "$KNYTOS_SIGNER_TARGET")
+    printf 'KNYTOS_CLUSTER_SIGN=%q\n' "$KNYTOS_SIGNER_TARGET/debug/cluster-sign" >> "$ENV_FILE"
 }
 command="${1:-}"
 shift || true
@@ -151,6 +151,6 @@ case "$command" in
     build-signer) build_signer ;;
     verify) load; echo 'SDK inputs verified' ;;
     env) load; sed 's/^/export /' "$ENV_FILE" ;;
-    status) load; printf 'SDK: %s\nOS: %s\nSitas: %s\n' "$CHARLOTTE_SDK_ROOT" "$OS_REVISION" "$SITAS_REVISION" ;;
-    *) echo 'usage: charlotte-sdk.sh use-os DIR | unpack ARCHIVE | fetch | worktree SOURCE [DEST] | runner-os SOURCE | build-signer | verify | env | status' >&2; exit 2 ;;
+    status) load; printf 'SDK: %s\nOS: %s\nSitas: %s\n' "$KNYTOS_SDK_ROOT" "$OS_REVISION" "$SITAS_REVISION" ;;
+    *) echo 'usage: knytos-sdk.sh use-os DIR | unpack ARCHIVE | fetch | worktree SOURCE [DEST] | runner-os SOURCE | build-signer | verify | env | status' >&2; exit 2 ;;
 esac

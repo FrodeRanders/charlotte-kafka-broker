@@ -645,13 +645,13 @@ mod tests {
             api::METADATA,
             version::METADATA,
             0x0102_0304,
-            b"charlotte",
+            b"knytos",
             &metadata_body(&[b"events", b"results"]),
         );
         let request = decode_request(&frame).expect("decode");
         assert_eq!(request.header.api_key, api::METADATA);
         assert_eq!(request.header.correlation_id, 0x0102_0304);
-        assert_eq!(request.header.client_id.as_deref(), Some(b"charlotte".as_slice()));
+        assert_eq!(request.header.client_id.as_deref(), Some(b"knytos".as_slice()));
         match request.body {
             RequestBody::Metadata {
                 topics: Some(topics),

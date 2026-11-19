@@ -1,0 +1,10 @@
+# Pinned Knytos platform inputs for the out-of-tree build.
+#
+# All platform crates, build inputs and host backends come from this source SDK.
+# tools/knytos-sdk.sh checks its revision, schema, toolchain and exact hashes.
+OS_REPOSITORY=https://github.com/FrodeRanders/knytos
+OS_REVISION=a3a615be7c3f7e85818104aaf226919393a5268c
+SITAS_REPOSITORY=https://github.com/FrodeRanders/sitas
+SITAS_REVISION=272a17efbee24787ade1f0ff25a1cce20e15113d
+TOOLCHAIN=nightly-2026-11-14
+SDK_SCHEMA=2

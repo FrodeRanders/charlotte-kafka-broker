@@ -1,7 +1,7 @@
 //! Host Kafka-subset smoke client for a deployed EL0 broker.
 //!
 //! Connects to a plaintext broker address (typically a QEMU SLIRP host
-//! forward), builds every request with the pinned CharlotteOS client codec,
+//! forward), builds every request with the pinned Knytos client codec,
 //! and parses every response with the same codec.
 //!
 //! Usage: `cargo run --example remote_smoke -- 127.0.0.1:19099`
@@ -17,7 +17,7 @@ use std::{
     time::Duration,
 };
 
-use charlotte_kafka as client;
+use knytos_kafka as client;
 
 const EVENTS: &[u8] = b"events";
 

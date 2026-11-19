@@ -38,11 +38,11 @@ dependencies = [
  "broker-core",
  "broker-engine",
  "broker-runtime",
- "catten-rt",
- "charlotte-app",
- "charlotte-launch",
- "sitas-charlotte",
+ "knytos-app",
+ "knytos-launch",
+ "knytos-rt",
  "sitas-core",
+ "sitas-knytos",
 ]
 
 [[package]]
@@ -62,7 +62,7 @@ dependencies = [
  "broker-engine",
  "broker-runtime",
  "broker-wire",
- "charlotte-kafka",
+ "knytos-kafka",
  "sitas-core",
  "sitas-unix",
 ]
@@ -73,7 +73,7 @@ version = "0.1.0"
 dependencies = [
  "broker-core",
  "sitas-core",
- "spin",
+ "spin 0.9.9",
 ]
 
 [[package]]
@@ -82,22 +82,6 @@ version = "0.1.0"
 dependencies = [
  "broker-core",
 ]
-
-[[package]]
-name = "catten-rt"
-version = "0.1.0"
-dependencies = [
- "catten-syscall",
- "charlotte-launch",
- "charlotte-lifecycle",
- "lock_api",
- "spin",
- "talc",
-]
-
-[[package]]
-name = "catten-syscall"
-version = "0.1.0"
 
 [[package]]
 name = "cfg-if"
@@ -126,46 +110,6 @@ dependencies = [
  "chacha20",
  "cipher",
  "poly1305",
-]
-
-[[package]]
-name = "charlotte-app"
-version = "0.1.0"
-dependencies = [
- "catten-rt",
- "charlotte-launch",
- "charlotte-protocol-grant",
-]
-
-[[package]]
-name = "charlotte-kafka"
-version = "0.1.0"
-dependencies = [
- "charlotte-launch",
- "zeroize",
-]
-
-[[package]]
-name = "charlotte-launch"
-version = "0.1.0"
-dependencies = [
- "curve25519-dalek",
- "ed25519-compact",
- "hpke",
- "rand_core",
- "x25519-dalek",
- "zeroize",
-]
-
-[[package]]
-name = "charlotte-lifecycle"
-version = "0.1.0"
-
-[[package]]
-name = "charlotte-protocol-grant"
-version = "0.1.0"
-dependencies = [
- "charlotte-launch",
 ]
 
 [[package]]
@@ -315,6 +259,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "knytos-app"
+version = "0.1.0"
+dependencies = [
+ "knytos-launch",
+ "knytos-protocol-grant",
+ "knytos-rt",
+]
+
+[[package]]
+name = "knytos-kafka"
+version = "0.1.0"
+dependencies = [
+ "knytos-launch",
+ "zeroize",
+]
+
+[[package]]
+name = "knytos-launch"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "ed25519-compact",
+ "hpke",
+ "rand_core",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "knytos-lifecycle"
+version = "0.1.0"
+
+[[package]]
+name = "knytos-protocol-grant"
+version = "0.1.0"
+dependencies = [
+ "knytos-launch",
+]
+
+[[package]]
+name = "knytos-rt"
+version = "0.1.0"
+dependencies = [
+ "knytos-launch",
+ "knytos-lifecycle",
+ "knytos-syscall",
+ "lock_api",
+ "talc",
+]
+
+[[package]]
+name = "knytos-syscall"
+version = "0.1.0"
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -396,23 +395,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "sitas-charlotte"
-version = "0.2.0"
+name = "sitas-core"
+version = "0.2.1"
 dependencies = [
- "sitas-core",
- "spin",
+ "spin 0.12.3",
 ]
 
 [[package]]
-name = "sitas-core"
-version = "0.2.0"
+name = "sitas-knytos"
+version = "0.2.1"
 dependencies = [
- "spin",
+ "sitas-core",
+ "spin 0.12.3",
 ]
 
 [[package]]
 name = "sitas-unix"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "sitas-core",
 ]
@@ -422,6 +421,15 @@ name = "spin"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+dependencies = [
+ "lock_api",
+]
+
+[[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
 dependencies = [
  "lock_api",
 ]

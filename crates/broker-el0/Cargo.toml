@@ -2,7 +2,7 @@
 name = "broker-el0"
 version.workspace = true
 edition.workspace = true
-description = "CharlotteOS EL0 Kafka-subset broker image"
+description = "Knytos-based EL0 Kafka-subset broker image"
 
 [[bin]]
 name = "broker-el0"
@@ -14,8 +14,8 @@ bench = false
 broker-core.workspace = true
 broker-engine.workspace = true
 broker-runtime.workspace = true
-catten-rt.workspace = true
-charlotte-app.workspace = true
-charlotte-launch.workspace = true
-sitas-charlotte.workspace = true
+knytos-rt.workspace = true
+knytos-app.workspace = true
+knytos-launch.workspace = true
+sitas-knytos.workspace = true
 sitas-core.workspace = true

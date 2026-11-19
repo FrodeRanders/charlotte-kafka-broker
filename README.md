@@ -1,10 +1,10 @@
-# charlotte-kafka-broker
+# knytos-kafka-broker
 
 A shard-per-partition, Kafka-compatible log broker for
-[CharlotteOS](https://github.com/FrodeRanders/charlotte-os), structured around
+[Knytos](https://github.com/FrodeRanders/knytos), structured around
 the [Sitas](https://github.com/FrodeRanders/sitas) shared-nothing runtime. This
 is a research application, not a production broker. Its purpose is to exercise
-the CharlotteOS machinery with a workload that has real concurrency, storage,
+the Knytos machinery with a workload that has real concurrency, storage,
 and distribution semantics instead of another single-threaded smoke service:
 
 - **sharding:** one partition log is owned by exactly one Sitas shard; all
@@ -12,10 +12,10 @@ and distribution semantics instead of another single-threaded smoke service:
 - **asynchrony:** parked shards, bounded mailboxes, and completion-driven
   wakeups rather than polling;
 - **persistence:** partition logs that will move from memory to a segmented
-  format on the CharlotteOS block/object-store capabilities;
+  format on the Knytos block/object-store capabilities;
 - **distribution:** partition leaders and replicas placed across cluster
   members, with the deployment, naming, and Raft services already present in
-  CharlotteOS;
+  Knytos;
 - **capability discipline:** the broker receives only the narrow transport,
   storage, and clock capabilities its role requires.
 
@@ -25,7 +25,7 @@ serves fetches, and reports metadata. That is enough to demonstrate a real
 distributed system on top of the kernel, and it is the substrate a later
 database can reuse.
 
-It is also a worked example of out-of-tree CharlotteOS development. The
+It is also a worked example of out-of-tree Knytos development. The
 boundary between this repository and the operating system, and the method used
 to develop, compile, package, sign, and deploy against it, are specified in
 [docs/development-model.md](docs/development-model.md).
@@ -45,14 +45,14 @@ broker-core     transport-free partition log and topic catalog
 `broker-core`, `broker-wire`, `broker-engine`, and `broker-runtime` are
 `no_std + alloc` and never depend on a particular transport, runtime, or
 storage backend. `broker-host` adds a plain TCP front end and drives the whole
-stack with the real CharlotteOS Kafka client codec. The same service code is
+stack with the real Knytos Kafka client codec. The same service code is
 intended to run under `sitas-unix` on a host for tests and under
-`sitas-charlotte` at EL0.
+`sitas-knytos` at EL0.
 
 ## Restricted protocol subset
 
 The wire subset mirrors the request versions already implemented by the
-CharlotteOS Kafka connector (`charlotte-kafka`), so the connector can talk to
+Knytos Kafka connector (`knytos-kafka`), so the connector can talk to
 this broker without a separate protocol dialect.
 
 | API | Key | Version | Request | Response |
@@ -77,13 +77,13 @@ compression, record headers, and dynamic topic creation.
 | `crates/broker-wire` | Bounded Kafka subset decode/encode, including record batch v2 |
 | `crates/broker-engine` | Transport-free request dispatch and Kafka error mapping |
 | `crates/broker-runtime` | Sitas shard services and the user-facing `Broker` API |
-| `crates/broker-host` | Host TCP front end and `charlotte-kafka` conformance tests |
-| `crates/broker-el0` | CharlotteOS EL0 image: reactor, grants, TCP listener, engine dispatch |
+| `crates/broker-host` | Host TCP front end and `knytos-kafka` conformance tests |
+| `crates/broker-el0` | Knytos EL0 image: reactor, grants, TCP listener, engine dispatch |
 
 | Tooling | Purpose |
 |---|---|
-| `charlotte.lock` | Pinned source SDK, OS/Sitas revisions, schema and toolchain |
-| `tools/charlotte-sdk.sh` | Resolve a checkout or unpacked SDK, build `cluster-sign` |
+| `knytos.lock` | Pinned source SDK, OS/Sitas revisions, schema and toolchain |
+| `tools/knytos-sdk.sh` | Resolve a checkout or unpacked SDK, build `cluster-sign` |
 | `tools/build-elf.sh` | Build `broker-el0` through the platform builder |
 | `tools/package.sh` | Sign the artifact and print the deployment handoff |
 
@@ -94,7 +94,7 @@ compression, record headers, and dynamic topic creation.
 - [x] `broker-runtime`: shard-per-partition services over typed mailboxes
 - [x] `broker-wire`: restricted request decode and response encode
 - [x] `broker-engine`: dispatch and per-partition error mapping
-- [x] Host TCP front end and `charlotte-kafka` conformance tests
+- [x] Host TCP front end and `knytos-kafka` conformance tests
 - [x] `broker-el0` builds and signs through the platform tooling
 - [x] EL0 execution under QEMU and deployment through a `CDEPLOY6` descriptor
       (AArch64 and x86_64 guests)
@@ -106,8 +106,8 @@ compression, record headers, and dynamic topic creation.
 ## Build and test
 
 ```sh
-tools/charlotte-sdk.sh unpack /path/to/charlotte-app-sdk.tar.gz
-# Alternatively: tools/charlotte-sdk.sh use-os ../charlotte-os
+tools/knytos-sdk.sh unpack /path/to/knytos-app-sdk.tar.gz
+# Alternatively: tools/knytos-sdk.sh use-os ../knytos
 cargo fmt -- --check
 cargo test
 cargo test -p broker-el0
@@ -120,7 +120,7 @@ cargo run --example host_broker   # TCP broker on 127.0.0.1:9092
 `no_std` EL0. Build and sign it through the resolved platform:
 
 ```sh
-tools/charlotte-sdk.sh use-os ../charlotte-os   # or: fetch / unpack <sdk.tar.gz>
+tools/knytos-sdk.sh use-os ../knytos   # or: fetch / unpack <sdk.tar.gz>
 tools/build-elf.sh
 tools/package.sh sign
 ```
@@ -131,7 +131,7 @@ host Kafka-subset smoke client against it, then verifies cooperative broker
 shutdown and node poweroff:
 
 ```sh
-CHARLOTTE_OS_DIR=../charlotte-os tools/qemu-smoke.sh
+KNYTOS_DIR=../knytos tools/qemu-smoke.sh
 ```
 
 `tools/soak/run_soak.sh` runs the independent Python load client for as long as
@@ -139,36 +139,36 @@ needed, against the host front end or a deployed guest:
 
 ```sh
 tools/soak/run_soak.sh --host --duration 60 --rate 20
-CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 20
+KNYTOS_DIR=../knytos tools/soak/run_soak.sh --duration 43200 --rate 20
 ```
 
-The conformance tests in `crates/broker-host/tests/charlotte_conformance.rs`
-build every request with the pinned `charlotte-kafka` client codec and parse
+The conformance tests in `crates/broker-host/tests/knytos_conformance.rs`
+build every request with the pinned `knytos-kafka` client codec and parse
 every response with the same codec, so the broker is checked against the exact
-wire versions the CharlotteOS connector uses.
+wire versions the Knytos connector uses.
 
-The workspace pins the same nightly toolchain as CharlotteOS
-(`nightly-2026-07-27`) and pins the Sitas and CharlotteOS revisions in the root
+The workspace pins the same nightly toolchain as Knytos
+(`nightly-2026-07-27`) and pins the Sitas and Knytos revisions in the root
 `Cargo.toml`. `broker-host` is the only crate that knows about a host
-operating system; the other crates are fit for the CharlotteOS EL0 target.
+operating system; the other crates are fit for the Knytos EL0 target.
 
-## Developing against CharlotteOS
+## Developing against Knytos
 
 This repository consumes the platform and ends at a signed artifact plus
 descriptor inputs; placement, admission, launch, and lifecycle belong to
-CharlotteOS tooling. The full ownership matrix, pinned contracts, and
+Knytos tooling. The full ownership matrix, pinned contracts, and
 stage-by-stage commands are in
 [docs/development-model.md](docs/development-model.md).
 
 | Stage | Owner | Output |
 |---|---|---|
-| Develop | This repository | Host-tested portable crates and `charlotte-kafka` conformance |
+| Develop | This repository | Host-tested portable crates and `knytos-kafka` conformance |
 | Compile | This repository, read-only OS platform spec | `target/elf/broker.elf` (M2) |
 | Package and sign | This repository's parameters, OS `cluster-sign` | CLS2-signed ELF and its SHA-256 |
 | Upload | Operator or CI | Immutable bytes in the central store |
 | Deploy | OS `deployd`/`agent` via signed `CDEPLOY6` | Placed, launched, generation-fenced instance |
 
-Two rules follow from this boundary. This repository never edits a CharlotteOS
+Two rules follow from this boundary. This repository never edits a Knytos
 checkout or stages files into its bundle, and every platform gap is fixed in
 the OS repository and adopted here by bumping the pinned revision.
 

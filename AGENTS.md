@@ -2,9 +2,9 @@
 
 ## Project purpose
 
-This repository builds a research Kafka-subset broker for CharlotteOS on top of
+This repository builds a research Kafka-subset broker for Knytos on top of
 the Sitas shard-per-core runtime. It is an application repository: it exists to
-exercise CharlotteOS storage, networking, naming, deployment, and capability
+exercise Knytos storage, networking, naming, deployment, and capability
 machinery with a workload that has genuine concurrency and distribution
 semantics. It is not a production broker and not a place to grow general
 infrastructure frameworks.
@@ -13,7 +13,7 @@ The layers are `broker-wire` (bounded codec), `broker-engine` (dispatch and
 error mapping), `broker-runtime` (Sitas shard services), and `broker-core`
 (partition log and catalog). `broker-host` is the only host-specific crate: it
 provides the TCP front end and the conformance tests. `broker-el0` is the
-`no_std` image built for the CharlotteOS EL0 target; it is excluded from
+`no_std` image built for the Knytos EL0 target; it is excluded from
 default workspace builds and is built with `tools/build-elf.sh`.
 
 Read [docs/architecture.md](docs/architecture.md) before changing protocol,
@@ -23,21 +23,21 @@ application is built, signed, packaged, or deployed.
 
 ## Repository boundary
 
-This repository consumes CharlotteOS; it does not develop it. The two
+This repository consumes Knytos; it does not develop it. The two
 repositories meet at versioned crates, the launch/descriptor ABI, and the
 deployment handoff. Preserve that separation:
 
-1. Never edit a CharlotteOS checkout from this repository. Paths under
-   `CHARLOTTE_OS_DIR` are read-only inputs. OS gaps are fixed in the OS
+1. Never edit a Knytos checkout from this repository. Paths under
+   `KNYTOS_DIR` are read-only inputs. OS gaps are fixed in the OS
    repository and adopted here by bumping the pinned revision.
-2. Never stage artifacts into a CharlotteOS service bundle or rely on
+2. Never stage artifacts into a Knytos service bundle or rely on
    `BOOTSTRAP_ELFS`. Bootstrap embedding is an OS bring-up mechanism; this
    application deploys through a signed `CDEPLOY6` descriptor.
-3. The host development loop must work without a CharlotteOS checkout. Resolve the pinned SDK once; thereafter
+3. The host development loop must work without a Knytos checkout. Resolve the pinned SDK once; thereafter
    `cargo test` needs cargo and those SDK source crates, not an OS checkout.
 4. The product of this repository is a signed ELF plus descriptor inputs
    (placement, limits, grants). The operator or CI uploads the immutable
-   bytes; CharlotteOS admits, places, and launches them.
+   bytes; Knytos admits, places, and launches them.
 5. Never commit private keys, deployment material, or built ELFs.
 6. Update [docs/development-model.md](docs/development-model.md) in the same
    change as any new platform dependency, tooling invocation, or boundary
@@ -57,13 +57,13 @@ and updates `docs/architecture.md` at the same time.
 5. `broker-core` is pure state: no clocks, channels, threads, or I/O.
 6. The wire subset is bounded and versioned. Adding an API or version requires
    updating the table in `docs/architecture.md` and keeping the
-   `charlotte-kafka` conformance suite in `broker-host` green.
+   `knytos-kafka` conformance suite in `broker-host` green.
 7. Long waits park on the runtime parker; no busy-spin loops.
 8. Every reply channel is bounded and every wait has a bounded retry budget.
 9. Values that cross a shard boundary are owned; borrowed record data never
    outlives the command that carried it.
-10. `charlotte.lock` pins the OS/Sitas revisions, SDK schema and toolchain.
-    Workspace platform dependencies use only `.charlotte/sdk/charlotte-app-sdk`;
+10. `knytos.lock` pins the OS/Sitas revisions, SDK schema and toolchain.
+    Workspace platform dependencies use only `.knytos/sdk/knytos-app-sdk`;
     never mix Git and SDK instances of the same platform crate. Change the
     reviewed platform pin deliberately, separately from implementation changes.
 
@@ -76,14 +76,14 @@ and updates `docs/architecture.md` at the same time.
 - Follow the rustfmt configuration in the repository; do not hand-format.
 - Keep public APIs documented; `cargo doc --no-deps` must succeed.
 - Record batch and protocol code mirrors the bounded versions in
-  `charlotte-kafka`; when that crate changes its version table, reconcile here.
+  `knytos-kafka`; when that crate changes its version table, reconcile here.
 
 ## Testing and validation
 
 Run the narrowest relevant tests first, then broaden:
 
 ```bash
-tools/charlotte-sdk.sh verify
+tools/knytos-sdk.sh verify
 cargo fmt -- --check
 cargo test
 cargo test -p broker-el0
@@ -94,7 +94,7 @@ cargo doc --no-deps
 The EL0 image is validated with the platform tools, not by host cargo:
 
 ```bash
-tools/charlotte-sdk.sh use-os <charlotte-os-dir>   # or fetch / unpack
+tools/knytos-sdk.sh use-os <knytos-dir>   # or fetch / unpack
 tools/build-elf.sh
 tools/package.sh sign
 ```
@@ -102,7 +102,7 @@ tools/package.sh sign
 With Docker and QEMU available, the end-to-end deployment check is:
 
 ```bash
-CHARLOTTE_OS_DIR=<charlotte-os-dir> tools/qemu-smoke.sh
+KNYTOS_DIR=<knytos-dir> tools/qemu-smoke.sh
 ```
 
 The independent Python load client lives under `tools/soak/`; it must stay
@@ -111,14 +111,14 @@ and is not part of any crate. Its runner validates the deployed image under
 sustained load:
 
 ```bash
-CHARLOTTE_OS_DIR=<charlotte-os-dir> tools/soak/run_soak.sh --duration 60 --rate 5
+KNYTOS_DIR=<knytos-dir> tools/soak/run_soak.sh --duration 60 --rate 5
 ```
 
 When touching `broker-core`, cover append/fetch boundaries, offset exhaustion,
 unknown topics/partitions, and empty or oversized appends. When touching
 `broker-runtime`, cover success, full mailboxes, shard shutdown, and reply
 timeouts where practical. When touching `broker-wire` or `broker-engine`,
-extend `crates/broker-host/tests/charlotte_conformance.rs` so the change is
+extend `crates/broker-host/tests/knytos_conformance.rs` so the change is
 validated by the real client codec, not only by this repository's decoder.
 
 ## Documentation responsibilities

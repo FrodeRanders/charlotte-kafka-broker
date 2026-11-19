@@ -1,38 +1,38 @@
-# Development model: consuming the CharlotteOS SDK
+# Development model: consuming the Knytos SDK
 
 This repository is an application example. Broker core, wire handling, dispatch
 and partition state belong here. Runtime owners, launch grants, protocol clients,
-ELF targets, signing formats and deployment admission belong to CharlotteOS.
+ELF targets, signing formats and deployment admission belong to Knytos.
 
 ## Resolve the SDK once
 
-`charlotte.lock` pins the OS revision, Sitas revision, toolchain and schema 2.
+`knytos.lock` pins the OS revision, Sitas revision, toolchain and schema 2.
 All workspace platform dependencies are relative paths into one generated source
-SDK under `.charlotte/sdk/charlotte-app-sdk`. Cargo never mixes Git and SDK
+SDK under `.knytos/sdk/knytos-app-sdk`. Cargo never mixes Git and SDK
 instances of the same capability or runtime types. The SDK includes
-`charlotte-app`, `catten-rt`, `charlotte-launch`, the Kafka client codec and both
+`knytos-app`, `knytos-rt`, `knytos-launch`, the Kafka client codec and both
 Sitas host/native backends. `Cargo.lock` pins external registry dependencies.
 
 ```sh
-tools/charlotte-sdk.sh unpack /path/to/charlotte-app-sdk.tar.gz
+tools/knytos-sdk.sh unpack /path/to/knytos-app-sdk.tar.gz
 # Or export from a matching, read-only developer checkout:
-tools/charlotte-sdk.sh use-os ../charlotte-os
+tools/knytos-sdk.sh use-os ../knytos
 # Or fetch the pinned OS/Sitas sources and export them into application state:
-tools/charlotte-sdk.sh fetch
-tools/charlotte-sdk.sh verify
+tools/knytos-sdk.sh fetch
+tools/knytos-sdk.sh verify
 ```
 
-A supplied `CHARLOTTE_SDK_SHA256` or `.sha256` sidecar is checked before unpack.
+A supplied `KNYTOS_SDK_SHA256` or `.sha256` sidecar is checked before unpack.
 The resolver verifies schema, revisions, toolchain and every file hash before
 using the SDK. These consistency checks are not signed release provenance.
 A deliberate pin change requires resolving a matching SDK again. `worktree`
 creates an independent local clone at the pin when the source checkout differs;
 it never registers a worktree in the input repository. The SDK exporter accepts
-`CHARLOTTE_SITAS_DIR` for its read-only Sitas input.
+`KNYTOS_SITAS_DIR` for its read-only Sitas input.
 
-`.charlotte/` contains generated SDK, signer and runner state and is ignored.
+`.knytos/` contains generated SDK, signer and runner state and is ignored.
 Exporting and compiling do not modify the OS checkout. The signer is copied to
-application-owned `.charlotte/signer` before Cargo can update a lockfile or build
+application-owned `.knytos/signer` before Cargo can update a lockfile or build
 output, preserving the SDK's verified inputs. The Rust toolchain is
 `nightly-2026-07-27`; target builds also need `rust-src` and `llvm-tools`.
 
@@ -55,7 +55,7 @@ checks all six application crates; `--all` would also traverse local path
 dependencies and apply application formatting to the verified SDK inputs.
 
 The portable crates remain `no_std + alloc`. Conformance uses the SDK's actual
-`charlotte-kafka` request builders and response decoders over a host TCP server.
+`knytos-kafka` request builders and response decoders over a host TCP server.
 The EL0 host tests cover framing and configuration parsing without invoking
 native syscalls. A delayed-exit regression confirms that partition shutdown
 acknowledgements are not mistaken for completed thread joins.
@@ -69,7 +69,7 @@ project layout:
 ```sh
 tools/build-elf.sh --arch aarch64
 # Or --arch x86_64
-CHARLOTTE_SIGN_KEY_FILE=/path/to/restricted/key tools/package.sh sign
+KNYTOS_SIGN_KEY_FILE=/path/to/restricted/key tools/package.sh sign
 ```
 
 `tools/build-elf.sh` writes `target/elf/broker.elf`, uses the SDK's target/linker
@@ -109,7 +109,7 @@ The existing `tools/package.sh sign` output lists the descriptor/sign/notify
 handoff. For the complete disposable local workflow:
 
 ```sh
-CHARLOTTE_OS_DIR=../charlotte-os tools/qemu-smoke.sh
+KNYTOS_DIR=../knytos tools/qemu-smoke.sh
 ```
 
 The runner creates an application-owned OS/Sitas mirror and recreates its

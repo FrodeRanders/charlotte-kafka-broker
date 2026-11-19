@@ -394,7 +394,7 @@ impl Engine {
                     &JoinGroupResponse {
                         error: NO_ERROR,
                         generation,
-                        protocol: b"charlotte-fixed-v1".to_vec(),
+                        protocol: b"knytos-fixed-v1".to_vec(),
                         leader: member_id.clone(),
                         member_id,
                         members,

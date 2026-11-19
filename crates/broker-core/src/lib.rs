@@ -1,9 +1,9 @@
-//! Deterministic, transport-free state for the CharlotteOS Kafka broker.
+//! Deterministic, transport-free state for the Knytos Kafka broker.
 //!
 //! This crate owns the partition log and topic catalog and nothing else: no
 //! threads, channels, clocks, or I/O. That keeps record and offset semantics
 //! testable in isolation and lets the same code run under `sitas-unix` on a
-//! host and under `sitas-charlotte` at EL0.
+//! host and under `sitas-knytos` at EL0.
 
 #![no_std]
 

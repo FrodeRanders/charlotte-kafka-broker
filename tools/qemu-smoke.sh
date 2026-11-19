@@ -3,27 +3,27 @@
 # qemu-smoke.sh -- deploy the signed EL0 broker into a single-guest QEMU
 # cluster and run the host Kafka-subset smoke client against it.
 #
-# Requires Docker (the RustFS fixture), QEMU, and a full CharlotteOS checkout
-# with the parameterized deployment fixture. Set CHARLOTTE_OS_DIR when the
+# Requires Docker (the RustFS fixture), QEMU, and a full Knytos checkout
+# with the parameterized deployment fixture. Set KNYTOS_DIR when the
 # resolved platform is an exported SDK.
 #
 # Usage:
-#   CHARLOTTE_OS_DIR=../charlotte-os tools/qemu-smoke.sh
+#   KNYTOS_DIR=../knytos tools/qemu-smoke.sh
 #
 # Environment:
-#   CATTEN_APP_HOST_PORT   host port forwarded to guest 9092 (default 19099)
-#   CATTEN_QEMU_TIMEOUT    runner timeout in seconds (default 480)
+#   KNYTOS_APP_HOST_PORT   host port forwarded to guest 9092 (default 19099)
+#   KNYTOS_QEMU_TIMEOUT    runner timeout in seconds (default 480)
 set -euo pipefail
 
 # shellcheck source=/dev/null
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/platform.sh"
 
-OS_DIR="${CHARLOTTE_OS_DIR:-}"
+OS_DIR="${KNYTOS_DIR:-}"
 if [ -z "$OS_DIR" ]; then
-    if [ "${CHARLOTTE_PLATFORM_KIND:-}" = "os" ]; then
-        OS_DIR="$CHARLOTTE_PLATFORM_ROOT"
+    if [ "${KNYTOS_PLATFORM_KIND:-}" = "os" ]; then
+        OS_DIR="$KNYTOS_PLATFORM_ROOT"
     else
-        echo "error: set CHARLOTTE_OS_DIR to a full CharlotteOS checkout to run QEMU" >&2
+        echo "error: set KNYTOS_DIR to a full Knytos checkout to run QEMU" >&2
         exit 1
     fi
 fi
@@ -33,10 +33,10 @@ if [ ! -x "$OS_DIR/scripts/run-aarch64.sh" ]; then
 fi
 
 # Platform runners own generated OS artifacts; isolate those writes here.
-OS_DIR="$("$BROKER_ROOT/tools/charlotte-sdk.sh" runner-os "$OS_DIR")"
+OS_DIR="$("$BROKER_ROOT/tools/knytos-sdk.sh" runner-os "$OS_DIR")"
 
-APP_HOST_PORT="${CATTEN_APP_HOST_PORT:-19099}"
-TIMEOUT="${CATTEN_QEMU_TIMEOUT:-480}"
+APP_HOST_PORT="${KNYTOS_APP_HOST_PORT:-19099}"
+TIMEOUT="${KNYTOS_QEMU_TIMEOUT:-480}"
 LOG="$BROKER_ROOT/target/qemu-smoke.log"
 
 BROKER_ADVERTISE_HOST=127.0.0.1 BROKER_ADVERTISE_PORT="$APP_HOST_PORT" \
@@ -46,16 +46,16 @@ BROKER_ADVERTISE_HOST=127.0.0.1 BROKER_ADVERTISE_PORT="$APP_HOST_PORT" \
 : >"$LOG"
 echo ">>> booting one guest and deploying broker (log: $LOG)"
 # Each smoke run starts a new appliance; an old catalog can retain shutdown intent.
-CATTEN_DEPLOY_NAME=broker \
-CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
-CATTEN_DEPLOY_OBJECT_KEY=deployments/broker.elf \
-CATTEN_DEPLOY_STACK_PAGES=8 \
-CATTEN_DEPLOY_MAX_THREADS=16 \
-CATTEN_DEPLOY_GRACE_MS=5000 \
-CATTEN_DEPLOY_GRANTS="tcpip=client broker=publish" \
-CATTEN_APP_HOST_PORT="$APP_HOST_PORT" \
-CATTEN_APP_GUEST_PORT=9092 \
-CATTEN_APP_HOLD_SECONDS="${CATTEN_APP_HOLD_SECONDS:-20}" \
+KNYTOS_DEPLOY_NAME=broker \
+KNYTOS_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
+KNYTOS_DEPLOY_OBJECT_KEY=deployments/broker.elf \
+KNYTOS_DEPLOY_STACK_PAGES=8 \
+KNYTOS_DEPLOY_MAX_THREADS=16 \
+KNYTOS_DEPLOY_GRACE_MS=5000 \
+KNYTOS_DEPLOY_GRANTS="tcpip=client broker=publish" \
+KNYTOS_APP_HOST_PORT="$APP_HOST_PORT" \
+KNYTOS_APP_GUEST_PORT=9092 \
+KNYTOS_APP_HOLD_SECONDS="${KNYTOS_APP_HOLD_SECONDS:-20}" \
 "$OS_DIR/scripts/run-aarch64.sh" debug --fresh-storage --deployment-ingress-test --shutdown-ingress-test --timeout "$TIMEOUT" \
     >"$LOG" 2>&1 &
 RUNNER_PID=$!

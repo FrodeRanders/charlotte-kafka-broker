@@ -1,7 +1,7 @@
-//! Conformance tests against the real CharlotteOS Kafka client codec.
+//! Conformance tests against the real Knytos Kafka client codec.
 //!
-//! Every request is built by `charlotte-kafka` and every response is parsed by
-//! `charlotte-kafka`, over the host TCP front end. This proves the broker
+//! Every request is built by `knytos-kafka` and every response is parsed by
+//! `knytos-kafka`, over the host TCP front end. This proves the broker
 //! speaks the exact bounded versions the connector already uses instead of
 //! only round-tripping through this repository's own decoder.
 
@@ -33,7 +33,7 @@ use broker_wire::protocol::{
     OFFSET_OUT_OF_RANGE,
     UNSUPPORTED_VERSION,
 };
-use charlotte_kafka as client;
+use knytos_kafka as client;
 use sitas_unix::UnixRuntime;
 
 const EVENTS: &[u8] = b"events";

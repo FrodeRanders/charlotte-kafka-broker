@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded-memory load loop for the CharlotteOS Kafka broker.
+"""Bounded-memory load loop for the Knytos Kafka broker.
 
 Offers an aggregate paced record stream to one topic partition from a pool of
 independent producer connections, consumes the records back, and verifies log
@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-errors", type=int, default=100)
     parser.add_argument("--status-interval", type=float, default=30.0)
     parser.add_argument("--api-version", default=None, help="e.g. 0.11.0; auto-negotiated when unset")
-    parser.add_argument("--client-id", default="charlotte-soak")
+    parser.add_argument("--client-id", default="knytos-soak")
     args = parser.parse_args()
     if args.producers < 1:
         parser.error("--producers must be at least 1")

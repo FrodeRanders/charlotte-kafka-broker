@@ -3,7 +3,7 @@
 //! [`Engine`] decodes a request frame with `broker-wire`, calls the owning
 //! shard through `broker-runtime`, and encodes the response. It owns no
 //! sockets and no threads, so the same dispatch code can serve the host TCP
-//! front end and, later, the CharlotteOS EL0 service.
+//! front end and, later, the Knytos EL0 service.
 
 #![no_std]
 

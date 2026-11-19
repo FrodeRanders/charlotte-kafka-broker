@@ -1,7 +1,7 @@
 //! Runs a plain TCP broker on `127.0.0.1:9092` with one `events` topic.
 //!
 //! This is a development front end: it exists so the broker can be exercised
-//! from a host client without booting CharlotteOS.
+//! from a host client without booting Knytos.
 
 use std::{
     net::SocketAddr,
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let server = start(engine, "127.0.0.1:9092".parse::<SocketAddr>()?)?;
-    println!("charlotte kafka broker listening on {}", server.local_addr());
+    println!("knytos kafka broker listening on {}", server.local_addr());
 
     loop {
         std::thread::sleep(std::time::Duration::from_secs(3600));

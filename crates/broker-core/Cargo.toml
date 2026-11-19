@@ -2,7 +2,7 @@
 name = "broker-core"
 version.workspace = true
 edition.workspace = true
-description = "Transport-free partition log and topic catalog for the CharlotteOS Kafka broker"
+description = "Transport-free partition log and topic catalog for the Knytos-based Kafka broker"
 
 [lib]
 test = true

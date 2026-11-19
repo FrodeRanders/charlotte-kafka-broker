@@ -3,35 +3,35 @@
 set -euo pipefail
 
 BROKER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BROKER_STATE="$BROKER_ROOT/.charlotte"
+BROKER_STATE="$BROKER_ROOT/.knytos"
 
 if [ ! -f "$BROKER_STATE/platform.env" ]; then
-    echo "error: no CharlotteOS platform resolved yet" >&2
+    echo "error: no Knytos platform resolved yet" >&2
     echo "       run one of:" >&2
-    echo "         tools/charlotte-sdk.sh fetch" >&2
-    echo "         tools/charlotte-sdk.sh use-os <charlotte-os-dir>" >&2
-    echo "         tools/charlotte-sdk.sh unpack <sdk.tar.gz>" >&2
+    echo "         tools/knytos-sdk.sh fetch" >&2
+    echo "         tools/knytos-sdk.sh use-os <knytos-dir>" >&2
+    echo "         tools/knytos-sdk.sh unpack <sdk.tar.gz>" >&2
     exit 1
 fi
 
 # shellcheck source=/dev/null
 . "$BROKER_STATE/platform.env"
 
-if [ -z "${CHARLOTTE_BUILD_ELF:-}" ]; then
+if [ -z "${KNYTOS_BUILD_ELF:-}" ]; then
     echo "error: $BROKER_STATE/platform.env does not name a platform builder" >&2
     exit 1
 fi
 
 # Refuse stale generated resolution after a deliberate platform pin change.
 # shellcheck source=/dev/null
-. "$BROKER_ROOT/charlotte.lock"
-if [ "${CHARLOTTE_OS_REVISION:-}" != "$OS_REVISION" ] || \
-   [ "${CHARLOTTE_TOOLCHAIN:-}" != "$TOOLCHAIN" ]; then
-    echo "error: stale .charlotte/platform.env; resolve the pinned platform again" >&2
+. "$BROKER_ROOT/knytos.lock"
+if [ "${KNYTOS_REVISION:-}" != "$OS_REVISION" ] || \
+   [ "${KNYTOS_TOOLCHAIN:-}" != "$TOOLCHAIN" ]; then
+    echo "error: stale .knytos/platform.env; resolve the pinned platform again" >&2
     exit 1
 fi
 
-"$BROKER_ROOT/tools/charlotte-sdk.sh" verify >/dev/null
+"$BROKER_ROOT/tools/knytos-sdk.sh" verify >/dev/null
 
 # The pinned OS creates a unique run directory and prints the exact signed
 # descriptor path. Follow that run's result, never a stale result from a prior

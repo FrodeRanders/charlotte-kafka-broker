@@ -2,8 +2,8 @@
 /target
 **/*.rs.bk
 
-# Local CharlotteOS platform resolution (checkout or unpacked SDK)
-/.charlotte/
+# Local Knytos platform resolution (checkout or unpacked SDK)
+/.knytos/
 
 # Editor and OS noise
 .idea/

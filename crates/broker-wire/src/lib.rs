@@ -1,7 +1,7 @@
-//! Bounded server-side Kafka wire subset for the CharlotteOS broker.
+//! Bounded server-side Kafka wire subset for the Knytos broker.
 //!
-//! The supported request versions mirror the ones the CharlotteOS Kafka
-//! connector already uses (`charlotte-kafka`), so the connector can talk to
+//! The supported request versions mirror the ones the Knytos Kafka
+//! connector already uses (`knytos-kafka`), so the connector can talk to
 //! this broker without a second dialect. See `docs/architecture.md` for the
 //! version table and framing rules.
 //!

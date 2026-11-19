@@ -12,17 +12,17 @@ class PlatformTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "broker with spaces"
         (self.root / "tools").mkdir(parents=True)
-        (self.root / ".charlotte").mkdir()
+        (self.root / ".knytos").mkdir()
         self.platform = self.root / "tools/platform.sh"
         shutil.copyfile(Path(__file__).resolve().parents[1] / "platform.sh", self.platform)
-        verifier = self.root / "tools/charlotte-sdk.sh"
+        verifier = self.root / "tools/knytos-sdk.sh"
         verifier.write_text('#!/bin/sh\ntest "$1" = verify\n')
         verifier.chmod(0o755)
-        (self.root / "charlotte.lock").write_text("OS_REVISION=current\nTOOLCHAIN=nightly-test\n")
-        self.environment = self.root / ".charlotte/platform.env"
+        (self.root / "knytos.lock").write_text("OS_REVISION=current\nTOOLCHAIN=nightly-test\n")
+        self.environment = self.root / ".knytos/platform.env"
         self.environment.write_text(
-            "CHARLOTTE_BUILD_ELF=/builder\nCHARLOTTE_OS_REVISION=current\n"
-            "CHARLOTTE_TOOLCHAIN=nightly-test\n"
+            "KNYTOS_BUILD_ELF=/builder\nKNYTOS_REVISION=current\n"
+            "KNYTOS_TOOLCHAIN=nightly-test\n"
         )
         self.os_dir = self.root / "platform"
         self.runs = self.os_dir / "target/deployment-ingress-test"
@@ -57,8 +57,8 @@ class PlatformTest(unittest.TestCase):
 
     def test_stale_platform_resolution_is_rejected(self):
         self.environment.write_text(
-            "CHARLOTTE_BUILD_ELF=/builder\nCHARLOTTE_OS_REVISION=old\n"
-            "CHARLOTTE_TOOLCHAIN=nightly-test\n"
+            "KNYTOS_BUILD_ELF=/builder\nKNYTOS_REVISION=old\n"
+            "KNYTOS_TOOLCHAIN=nightly-test\n"
         )
         result = subprocess.run(
             ["bash", "-c", '. "$1"', "test", str(self.platform)], capture_output=True,

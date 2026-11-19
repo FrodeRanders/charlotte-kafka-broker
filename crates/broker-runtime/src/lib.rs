@@ -1,4 +1,4 @@
-//! Sitas shard services for the CharlotteOS Kafka broker.
+//! Sitas shard services for the Knytos Kafka broker.
 //!
 //! [`Broker`] owns one mailbox per partition shard and routes produce, fetch,
 //! list-offset, and metadata operations to the shard that owns the requested
@@ -8,7 +8,7 @@
 //! exposed through typed methods on [`Broker`].
 //!
 //! This crate is `no_std + alloc`: on a host it runs over `sitas-unix`, and at
-//! EL0 it runs over `sitas-charlotte`. It never touches sockets or storage
+//! EL0 it runs over `sitas-knytos`. It never touches sockets or storage
 //! directly.
 
 #![no_std]

@@ -18,7 +18,7 @@ use broker_runtime::{
     BrokerConfig,
     TopicSpec,
 };
-use charlotte_app::{
+use knytos_app::{
     AppExit,
     Application,
     Context,
@@ -37,8 +37,8 @@ use charlotte_app::{
     },
     socket_send,
 };
-use charlotte_launch::deployment;
-use sitas_charlotte::CharlotteReactor;
+use knytos_launch::deployment;
+use sitas_knytos::KnytosReactor;
 use sitas_core::reactor_backend::ReactorBackend;
 
 const PORT: u16 = 9092;
@@ -74,13 +74,13 @@ const fn decimal_port(text: &str) -> i32 {
 }
 #[derive(Debug)]
 pub enum Error {
-    Launch(charlotte_app::LaunchError),
+    Launch(knytos_app::LaunchError),
     Broker(broker_runtime::BrokerError),
-    Grant(charlotte_app::grant_client::Error),
+    Grant(knytos_app::grant_client::Error),
     Socket(SocketError),
-    Ipc(catten_rt::owned::IpcError),
-    Memory(catten_rt::owned::MemoryError),
-    Observation(catten_rt::call::ObservationError),
+    Ipc(knytos_rt::owned::IpcError),
+    Memory(knytos_rt::owned::MemoryError),
+    Observation(knytos_rt::call::ObservationError),
     InvalidReply,
     Capacity,
 }
@@ -95,7 +95,7 @@ pub fn run(ctx: &Context) -> Result<AppExit, Error> {
     let tcp = app
         .acquire(b"tcpip", deployment::CLIENT_RIGHTS, &Deadline::after(STARTUP_MS))
         .map_err(Error::Grant)?;
-    let reactor = CharlotteReactor::new(0);
+    let reactor = KnytosReactor::new(0);
     let broker = Broker::start(
         &reactor,
         BrokerConfig::new(
@@ -112,27 +112,27 @@ pub fn run(ctx: &Context) -> Result<AppExit, Error> {
         broker,
         EngineConfig::new(BrokerIdentity::new(0, ADVERTISE_HOST, ADVERTISE_PORT)),
     );
-    let endpoint = Endpoint::create(charlotte_app::name(b"KBRK"), 1, 4).map_err(Error::Ipc)?;
+    let endpoint = Endpoint::create(knytos_app::name(b"KBRK"), 1, 4).map_err(Error::Ipc)?;
     let outcome = serve(&app, &reactor, &engine, &tcp, &endpoint);
     // Network scopes have cancelled accepted calls and closed sockets first.
     // A failed drain retains the engine/worker owners through domain abort.
     if let Err(error) = engine.broker().shutdown() {
         logln!("[broker] worker drain rejected: {:?}", error);
-        catten_rt::domain_abort();
+        knytos_rt::domain_abort();
     }
     logln!("[broker] partition workers joined; network scope released");
     outcome
 }
 
-fn wait(reactor: &CharlotteReactor, timeout_ms: Option<u64>) {
+fn wait(reactor: &KnytosReactor, timeout_ms: Option<u64>) {
     if let Err(error) = reactor.wait(&[], &[], timeout_ms.map(Duration::from_millis)) {
         logln!("[broker] CQ wait rejected: {:?}", error);
-        catten_rt::domain_abort();
+        knytos_rt::domain_abort();
     }
 }
 fn start_listener<'a>(
     tcp: &'a Connection,
-    reactor: &CharlotteReactor,
+    reactor: &KnytosReactor,
 ) -> Result<OwnedSocket<'a>, Error> {
     let deadline = Deadline::after(STARTUP_MS);
     let mut opening =
@@ -144,7 +144,7 @@ fn start_listener<'a>(
         }
         if deadline.expired() {
             // Remote creation is uncertain: keep the entire opening owner.
-            catten_rt::domain_abort();
+            knytos_rt::domain_abort();
         }
         wait(reactor, Some(deadline.remaining_ms()));
     };
@@ -168,7 +168,7 @@ struct Accepting<'a> {
 }
 fn serve(
     app: &Application<'_>,
-    reactor: &CharlotteReactor,
+    reactor: &KnytosReactor,
     engine: &Engine,
     tcp: &Connection,
     endpoint: &Endpoint,
@@ -348,7 +348,7 @@ impl<'a> Session<'a> {
     }
 }
 #[cfg(not(test))]
-charlotte_app::entry!(run);
+knytos_app::entry!(run);
 
 fn complete_frame(input: &[u8]) -> Result<Option<usize>, Error> {
     let Some(header) = input.get(..4) else {

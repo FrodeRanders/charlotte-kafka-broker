@@ -2,7 +2,7 @@
 name = "broker-wire"
 version.workspace = true
 edition.workspace = true
-description = "Bounded Kafka wire subset for the CharlotteOS broker"
+description = "Bounded Kafka wire subset for the Knytos-based broker"
 
 [lib]
 test = true

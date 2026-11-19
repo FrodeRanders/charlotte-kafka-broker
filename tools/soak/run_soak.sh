@@ -17,8 +17,8 @@
 #
 # Usage:
 #   tools/soak/run_soak.sh --host  --duration 30 --rate 20
-#   CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --duration 43200 --rate 100 --producers 8
-#   CHARLOTTE_OS_DIR=../charlotte-os tools/soak/run_soak.sh --kernel-profile release --no-net-dump
+#   KNYTOS_DIR=../knytos tools/soak/run_soak.sh --duration 43200 --rate 100 --producers 8
+#   KNYTOS_DIR=../knytos tools/soak/run_soak.sh --kernel-profile release --no-net-dump
 #
 # --rate is the aggregate offered load and --producers sizes the connection
 # pool. A synchronous producer offers at most one record per broker round trip,
@@ -50,8 +50,8 @@ BOOTSTRAP=""
 NO_BUILD="0"
 KEEP="0"
 CLEANUP_ON_FAILURE="0"
-KERNEL_PROFILE="${CATTEN_SOAK_KERNEL_PROFILE:-debug}"
-NET_DUMP="${CATTEN_SOAK_NET_DUMP:-1}"
+KERNEL_PROFILE="${KNYTOS_SOAK_KERNEL_PROFILE:-debug}"
+NET_DUMP="${KNYTOS_SOAK_NET_DUMP:-1}"
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -90,9 +90,9 @@ esac
 mkdir -p "$BROKER_ROOT/target"
 
 ensure_client_env() {
-    local python="${CHARLOTTE_SOAK_PYTHON:-python3}"
+    local python="${KNYTOS_SOAK_PYTHON:-python3}"
     if ! command -v "$python" >/dev/null 2>&1; then
-        echo "error: $python not found; set CHARLOTTE_SOAK_PYTHON to a Python 3 interpreter" >&2
+        echo "error: $python not found; set KNYTOS_SOAK_PYTHON to a Python 3 interpreter" >&2
         exit 1
     fi
 
@@ -110,7 +110,7 @@ ensure_client_env() {
         if ! "$python" -m venv "$VENV"; then
             echo "error: creating a virtualenv failed" >&2
             echo "       Debian/Ubuntu: apt install python3-venv" >&2
-            echo "       or set CHARLOTTE_SOAK_PYTHON to another Python 3" >&2
+            echo "       or set KNYTOS_SOAK_PYTHON to another Python 3" >&2
             exit 1
         fi
     fi
@@ -121,7 +121,7 @@ ensure_client_env() {
             && ! "$VENV/bin/python" -m ensurepip --upgrade --default-pip >/dev/null 2>&1; then
             echo "error: pip is unavailable in $VENV and ensurepip failed" >&2
             echo "       Debian/Ubuntu: apt install python3-venv" >&2
-            echo "       or set CHARLOTTE_SOAK_PYTHON to another Python 3" >&2
+            echo "       or set KNYTOS_SOAK_PYTHON to another Python 3" >&2
             exit 1
         fi
     fi
@@ -177,12 +177,12 @@ if [ "$MODE" = "host" ]; then
     exit 0
 fi
 
-OS_DIR="${CHARLOTTE_OS_DIR:-}"
+OS_DIR="${KNYTOS_DIR:-}"
 if [ -z "$OS_DIR" ]; then
-    if [ "${CHARLOTTE_PLATFORM_KIND:-}" = "os" ]; then
-        OS_DIR="$CHARLOTTE_PLATFORM_ROOT"
+    if [ "${KNYTOS_PLATFORM_KIND:-}" = "os" ]; then
+        OS_DIR="$KNYTOS_PLATFORM_ROOT"
     else
-        echo "error: set CHARLOTTE_OS_DIR to a full CharlotteOS checkout to run QEMU" >&2
+        echo "error: set KNYTOS_DIR to a full Knytos checkout to run QEMU" >&2
         exit 1
     fi
 fi
@@ -198,14 +198,14 @@ case "$ARCH" in
     *) echo "error: --arch must be aarch64, x86_64, or auto" >&2; exit 2 ;;
 esac
 # Platform runners own generated OS artifacts; isolate those writes here.
-OS_DIR="$("$BROKER_ROOT/tools/charlotte-sdk.sh" runner-os "$OS_DIR")"
+OS_DIR="$("$BROKER_ROOT/tools/knytos-sdk.sh" runner-os "$OS_DIR")"
 
 RUNNER="$OS_DIR/scripts/run-$ARCH.sh"
 if [ ! -x "$RUNNER" ]; then
     echo "error: no QEMU runner at $RUNNER" >&2
     exit 1
 fi
-if [ "$ARCH" = "x86_64" ] && ! grep -q "CATTEN_DEPLOY_NAME" "$RUNNER"; then
+if [ "$ARCH" = "x86_64" ] && ! grep -q "KNYTOS_DEPLOY_NAME" "$RUNNER"; then
     echo "error: $RUNNER does not yet support the external-artifact deployment fixture" >&2
     echo "       rerun with --arch aarch64 until the x86_64 fixture lands" >&2
     exit 1
@@ -218,7 +218,7 @@ if [ "$DURATION" -le 0 ]; then
     exit 2
 fi
 
-APP_HOST_PORT="${CATTEN_APP_HOST_PORT:-19099}"
+APP_HOST_PORT="${KNYTOS_APP_HOST_PORT:-19099}"
 BOOTSTRAP="${BOOTSTRAP:-127.0.0.1:$APP_HOST_PORT}"
 HOLD=$((DURATION + 120))
 TIMEOUT=$((HOLD + 600))
@@ -226,14 +226,14 @@ LOG="$BROKER_ROOT/target/soak-qemu.log"
 CLIENT_LOG="$BROKER_ROOT/target/soak-client.log"
 RUNNER_PID_FILE="$BROKER_ROOT/target/soak-runner.pid"
 QEMU_PID_FILE="$BROKER_ROOT/target/soak-qemu.pid"
-GDB_PORT="${CATTEN_SOAK_GDB_PORT:-1234}"
-MONITOR_SOCKET="/tmp/charlotte-monitor.sock"
-PCAP_FILE="/tmp/charlotte-net.pcap"
-SERIAL_LOG="/tmp/charlotte-serial.log"
+GDB_PORT="${KNYTOS_SOAK_GDB_PORT:-1234}"
+MONITOR_SOCKET="/tmp/knytos-monitor.sock"
+PCAP_FILE="/tmp/knytos-net.pcap"
+SERIAL_LOG="/tmp/knytos-serial.log"
 if [ "$ARCH" = "x86_64" ]; then
-    SERIAL_LOG="/tmp/charlotte-x86-serial.log"
+    SERIAL_LOG="/tmp/knytos-x86-serial.log"
 fi
-KERNEL_BINARY="$OS_DIR/target/${ARCH}-unknown-none-catten/${KERNEL_PROFILE}/catten"
+KERNEL_BINARY="$OS_DIR/target/${ARCH}-unknown-none-knytos/${KERNEL_PROFILE}/knytos"
 
 if [ "$NO_BUILD" != "1" ]; then
     echo ">>> building broker-el0 for $ARCH with advertised endpoint 127.0.0.1:$APP_HOST_PORT"
@@ -245,20 +245,20 @@ rm -f "$RUNNER_PID_FILE" "$QEMU_PID_FILE" "$MONITOR_SOCKET" "$PCAP_FILE"
 
 : >"$LOG"
 echo ">>> booting $ARCH guest; kernel=${KERNEL_PROFILE} net_dump=${NET_DUMP} hold=${HOLD}s timeout=${TIMEOUT}s (log: $LOG)"
-CATTEN_DEPLOY_NAME=broker \
-CATTEN_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
-CATTEN_DEPLOY_OBJECT_KEY=deployments/broker.elf \
-CATTEN_DEPLOY_STACK_PAGES=8 \
-CATTEN_DEPLOY_MAX_THREADS=64 \
-CATTEN_DEPLOY_GRACE_MS=5000 \
-CATTEN_DEPLOY_GRANTS="tcpip=client broker=publish" \
-CATTEN_APP_HOST_PORT="$APP_HOST_PORT" \
-CATTEN_APP_GUEST_PORT=9092 \
-CATTEN_APP_HOLD_SECONDS="$HOLD" \
-CATTEN_QEMU_PID_FILE="$QEMU_PID_FILE" \
-CATTEN_QEMU_MONITOR=1 \
-CATTEN_QEMU_NET_DUMP="$NET_DUMP" \
-CATTEN_QEMU_DEBUG_STUB=1 \
+KNYTOS_DEPLOY_NAME=broker \
+KNYTOS_DEPLOY_ELF="$BROKER_ROOT/target/elf/broker.elf" \
+KNYTOS_DEPLOY_OBJECT_KEY=deployments/broker.elf \
+KNYTOS_DEPLOY_STACK_PAGES=8 \
+KNYTOS_DEPLOY_MAX_THREADS=64 \
+KNYTOS_DEPLOY_GRACE_MS=5000 \
+KNYTOS_DEPLOY_GRANTS="tcpip=client broker=publish" \
+KNYTOS_APP_HOST_PORT="$APP_HOST_PORT" \
+KNYTOS_APP_GUEST_PORT=9092 \
+KNYTOS_APP_HOLD_SECONDS="$HOLD" \
+KNYTOS_QEMU_PID_FILE="$QEMU_PID_FILE" \
+KNYTOS_QEMU_MONITOR=1 \
+KNYTOS_QEMU_NET_DUMP="$NET_DUMP" \
+KNYTOS_QEMU_DEBUG_STUB=1 \
 "$RUNNER" "$KERNEL_PROFILE" --deployment-ingress-test --gdb-port "$GDB_PORT" \
     --timeout "$TIMEOUT" \
     >"$LOG" 2>&1 &
@@ -276,7 +276,7 @@ preserve_guest() {
     local reason="${1:-soak failure}"
     trap - EXIT
     disown "$RUNNER_PID" 2>/dev/null || true
-    echo ">>> $reason; leaving the CharlotteOS guest running for diagnosis" >&2
+    echo ">>> $reason; leaving the Knytos guest running for diagnosis" >&2
     echo ">>> runner PID: $RUNNER_PID (recorded in $RUNNER_PID_FILE)" >&2
     if [ -s "$QEMU_PID_FILE" ]; then
         echo ">>> QEMU PID: $(tr -d '[:space:]' <"$QEMU_PID_FILE") (recorded in $QEMU_PID_FILE)" >&2

@@ -2,7 +2,7 @@
 
 ## 1. Context
 
-CharlotteOS already speaks Kafka as a client: `charlotte-kafka` implements the
+Knytos already speaks Kafka as a client: `knytos-kafka` implements the
 bounded request versions, `kafka.elf` owns broker connections, credentials, and
 producer/consumer state behind capability endpoints, and `kafka_step.elf`
 provides a transactional runner. What is missing is a broker that runs *inside*
@@ -11,7 +11,7 @@ be the log substrate rather than merely a client of one.
 
 This repository is that broker. It is intentionally a subset: a durable,
 partitioned, replicated append log with Kafka wire compatibility for the paths
-the CharlotteOS connector already uses.
+the Knytos connector already uses.
 
 ## 2. Layer boundaries
 
@@ -34,7 +34,7 @@ the CharlotteOS connector already uses.
    |    broker-core     |  partition log + topic catalog (pure state)
    +---------+----------+
              |
-    storage and transport capabilities supplied by CharlotteOS
+    storage and transport capabilities supplied by Knytos
 ```
 
 - `broker-core` never performs I/O and never observes time. It is deterministic
@@ -51,7 +51,7 @@ the CharlotteOS connector already uses.
 ## 3. Execution model
 
 One partition log is owned by exactly one shard. A shard is one OS thread with
-one `ShardExecutor` and one reactor on CharlotteOS. A shard may own several
+one `ShardExecutor` and one reactor on Knytos. A shard may own several
 partitions; no partition is shared between shards.
 
 ```text
@@ -232,8 +232,8 @@ the boundary; the log owns ordering and offsets, not file layout.
 
 ## 7. Distribution direction
 
-The CharlotteOS cluster already provides discovery, a replicated name service,
-Raft (`catten-graft`), and signed placement. The intended progression is:
+The Knytos cluster already provides discovery, a replicated name service,
+Raft (`knytos-graft`), and signed placement. The intended progression is:
 
 1. a partition is hosted by one shard on one node;
 2. a replica set is described by a signed deployment descriptor;
@@ -246,10 +246,10 @@ Raft (`catten-graft`), and signed placement. The intended progression is:
 Until replication exists, the broker reports itself as the leader of every
 partition and stores `NO_ERROR` data locally.
 
-## 8. CharlotteOS integration
+## 8. Knytos integration
 
 This repository is an out-of-tree application. It produces a signed ELF and
-the inputs for a signed deployment descriptor, then hands them to CharlotteOS
+the inputs for a signed deployment descriptor, then hands them to Knytos
 deployment tooling; it never edits or stages files into the OS tree. The full
 boundary, ownership matrix, and stage commands are in
 [development-model.md](development-model.md).
@@ -263,13 +263,13 @@ boundary, ownership matrix, and stage commands are in
 - The expected grants for the EL0 broker are a `tcpip` socket capability and a
   storage capability. No MMIO, interrupt, or DMA authority belongs to the
   broker. Exact grant names and rights are fixed with the EL0 service.
-- The CharlotteOS connector requires verified TLS. CharlotteOS now has a native
+- The Knytos connector requires verified TLS. Knytos now has a native
   management TLS server implementation, but this broker has no TLS listener.
   The host milestones use plaintext with an external test client. In-guest connector interoperability also requires
   `AddOffsetsToTxn` v0 and `TxnOffsetCommit` v3; these remain outside the
   current advertised subset.
 
-The EL0 platform contract pins CharlotteOS runtime ABI 3 and the hardened
+The EL0 platform contract pins Knytos runtime ABI 3 and the hardened
 Sitas backend through one exported SDK. `Application` borrows launch authority,
 acquires the signed `tcpip` grant and publishes readiness after the first listener
 is bound. The returning entry wrapper acknowledges shutdown after the network
@@ -287,8 +287,8 @@ for SDK inputs, key-file signing, management mTLS and deployment boundaries.
   append locally with a degraded acknowledgement?
 
 The host conformance question is settled:
-`crates/broker-host/tests/charlotte_conformance.rs` uses the pinned
-`charlotte-kafka` request builders and response parsers as the oracle over the
+`crates/broker-host/tests/knytos_conformance.rs` uses the pinned
+`knytos-kafka` request builders and response parsers as the oracle over the
 TCP front end. The EL0 service should run the same dispatch (the engine) under
 the same conformance expectations.
 
@@ -298,7 +298,7 @@ the same conformance expectations.
   shard-per-partition runtime over typed mailboxes, bounded wire subset codec,
   host tests on the `sitas-unix` backend.
 - **M1 - host broker (done):** transport-free dispatch engine, plain TCP front
-  end, and conformance against `charlotte-kafka` request builders and response
+  end, and conformance against `knytos-kafka` request builders and response
   parsers.
 - **M2 - EL0 and deployment (done):** `broker.elf` built through the out-of-tree
   packaging flow, deployed with a signed `CDEPLOY6` descriptor, and exercised
